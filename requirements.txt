@@ -1,0 +1,8 @@
+numpy
+scipy
+matplotlib
+astropy
+torch
+scikit-learn
+astrodendro
+pytest

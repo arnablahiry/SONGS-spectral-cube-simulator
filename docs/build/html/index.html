@@ -1,0 +1,475 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="./" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>SONGS — Spectral Observations of Non-stationary Galactic Structures &#8212; SONGS 1.0.1 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="_static/styles/theme.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
+<link href="_static/styles/bootstrap.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
+<link href="_static/styles/pydata-sphinx-theme.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
+
+  
+  <link href="_static/vendor/fontawesome/6.5.2/css/all.min.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="_static/vendor/fontawesome/6.5.2/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="_static/vendor/fontawesome/6.5.2/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="_static/vendor/fontawesome/6.5.2/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/sphinx-book-theme.css?v=eba8b062" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=dfe6caa3a7d634c4db9b" />
+<link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=dfe6caa3a7d634c4db9b" />
+  <script src="_static/vendor/fontawesome/6.5.2/js/all.min.js?digest=dfe6caa3a7d634c4db9b"></script>
+
+    <script src="_static/documentation_options.js?v=423d4ce3"></script>
+    <script src="_static/doctools.js?v=9bcbadda"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="_static/scripts/sphinx-book-theme.js?v=887ef09a"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'index';</script>
+    <link rel="icon" href="_static/songs_icon.png"/>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Installation" href="installation.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          id="pst-primary-sidebar-checkbox"/>
+  <label class="overlay overlay-primary" for="pst-primary-sidebar-checkbox"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          id="pst-secondary-sidebar-checkbox"/>
+  <label class="overlay overlay-secondary" for="pst-secondary-sidebar-checkbox"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <div class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="#">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="_static/songs_icon.png" class="logo__image only-light" alt="SONGS 1.0.1 documentation - Home"/>
+    <script>document.write(`<img src="_static/songs_icon.png" class="logo__image only-dark" alt="SONGS 1.0.1 documentation - Home"/>`);</script>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+ <script>
+ document.write(`
+   <button class="btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quickstart.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="physics.html">Physics &amp; Mathematics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="generator.html">Generator Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="gui.html">GUI Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="visualise.html">Visualisation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="utilities.html">Utilities</a></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="_sources/index.md" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.md</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<script>
+document.write(`
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="theme-switch fa-solid fa-sun fa-lg" data-mode="light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg" data-mode="dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"></i>
+  </button>
+`);
+</script>
+
+
+<script>
+document.write(`
+  <button class="btn btn-sm pst-navbar-icon search-button search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+  </button>
+`);
+</script>
+
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>SONGS — Spectral Observations of Non-stationary Galactic Structures</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="songs-spectral-observations-of-non-stationary-galactic-structures">
+<h1>SONGS — Spectral Observations of Non-stationary Galactic Structures<a class="headerlink" href="#songs-spectral-observations-of-non-stationary-galactic-structures" title="Link to this heading">#</a></h1>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/arnablahiry/GalCubeCraft/main/assets/songs_banner.png"
+       alt="SONGS banner"
+       width="100%" />
+</p>
+<p><strong>SONGS</strong> is a high-fidelity simulator for synthetic IFU (Integral Field Unit) spectral cubes of disk galaxies,
+interacting systems, and diffuse low-surface-brightness features including halos, bridges, and tidal tails.</p>
+<p>It combines analytic Sérsic profiles, exponential vertical structure, empirical rotation curves, viewing-angle
+projections, instrument beam convolution, and a physically motivated diffuse emission model to produce
+3-D spectral datacubes suitable for algorithm development, denoising benchmarks, and transfer-learning
+pre-training.</p>
+<hr class="docutils" />
+<div class="toctree-wrapper compound">
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="installation.html#pypi-recommended">PyPI (recommended)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="installation.html#source-install-developer-mode">Source install (developer mode)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="installation.html#dependencies">Dependencies</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="quickstart.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="physics.html">Physics &amp; Mathematics</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="physics.html#sersic-radial-profile-disk-plane">Sérsic Radial Profile (Disk Plane)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="physics.html#vertical-exponential-profile">Vertical Exponential Profile</a></li>
+<li class="toctree-l2"><a class="reference internal" href="physics.html#analytical-rotation-curve">Analytical Rotation Curve</a></li>
+<li class="toctree-l2"><a class="reference internal" href="physics.html#beam-convolution">Beam Convolution</a></li>
+<li class="toctree-l2"><a class="reference internal" href="physics.html#diffuse-emission-physics">Diffuse Emission Physics</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="generator.html">Generator Reference</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="generator.html#songs-class">SONGS Class</a></li>
+<li class="toctree-l2"><a class="reference internal" href="generator.html#songsphy-class">SONGSPhy Class</a></li>
+<li class="toctree-l2"><a class="reference internal" href="generator.html#default-diffuse-params">DEFAULT_DIFFUSE_PARAMS</a></li>
+<li class="toctree-l2"><a class="reference internal" href="generator.html#multi-galaxy-placement">Multi-Galaxy Placement</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="gui.html">GUI Reference</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="gui.html#design-notes">Design notes</a></li>
+<li class="toctree-l2"><a class="reference internal" href="gui.html#usage">Usage</a></li>
+<li class="toctree-l2"><a class="reference internal" href="gui.html#songs.gui.LogWindow"><code class="docutils literal notranslate"><span class="pre">LogWindow</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="gui.html#songs.gui.SONGSGUI"><code class="docutils literal notranslate"><span class="pre">SONGSGUI</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="gui.html#songs.gui.TextRedirector"><code class="docutils literal notranslate"><span class="pre">TextRedirector</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="gui.html#songs.gui.latex_label"><code class="docutils literal notranslate"><span class="pre">latex_label()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="gui.html#songs.gui.main"><code class="docutils literal notranslate"><span class="pre">main()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="gui.html#songs.gui.param_frame"><code class="docutils literal notranslate"><span class="pre">param_frame()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="gui.html#overview">Overview</a></li>
+<li class="toctree-l2"><a class="reference internal" href="gui.html#layout">Layout</a></li>
+<li class="toctree-l2"><a class="reference internal" href="gui.html#launch-instructions">Launch Instructions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="gui.html#sliceviewer">SliceViewer</a></li>
+<li class="toctree-l2"><a class="reference internal" href="gui.html#visualisation-buttons">Visualisation Buttons</a></li>
+<li class="toctree-l2"><a class="reference internal" href="gui.html#saving">Saving</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="visualise.html">Visualisation</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="visualise.html#dependencies">Dependencies</a></li>
+<li class="toctree-l2"><a class="reference internal" href="visualise.html#songs.visualise.SliceViewer"><code class="docutils literal notranslate"><span class="pre">SliceViewer</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="visualise.html#songs.visualise.moment0"><code class="docutils literal notranslate"><span class="pre">moment0()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="visualise.html#songs.visualise.moment1"><code class="docutils literal notranslate"><span class="pre">moment1()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="visualise.html#songs.visualise.slice_view"><code class="docutils literal notranslate"><span class="pre">slice_view()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="visualise.html#songs.visualise.spectrum"><code class="docutils literal notranslate"><span class="pre">spectrum()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="visualise.html#helper-functions">Helper Functions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="visualise.html#sliceviewer-class">SliceViewer Class</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="utilities.html">Utilities</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="utilities.html#songs.utils.add_beam"><code class="docutils literal notranslate"><span class="pre">add_beam()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="utilities.html#songs.utils.apply_and_convolve_noise"><code class="docutils literal notranslate"><span class="pre">apply_and_convolve_noise()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="utilities.html#songs.utils.apply_noise"><code class="docutils literal notranslate"><span class="pre">apply_noise()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="utilities.html#songs.utils.convolve_beam"><code class="docutils literal notranslate"><span class="pre">convolve_beam()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="utilities.html#songs.utils.create_circular_aperture_mask"><code class="docutils literal notranslate"><span class="pre">create_circular_aperture_mask()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="utilities.html#beam-convolution">Beam Convolution</a></li>
+<li class="toctree-l2"><a class="reference internal" href="utilities.html#mask-helpers">Mask Helpers</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="right-next"
+       href="installation.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Installation</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By Arnab Lahiry
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2025, Arnab Lahiry.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="_static/scripts/bootstrap.js?digest=dfe6caa3a7d634c4db9b"></script>
+<script src="_static/scripts/pydata-sphinx-theme.js?digest=dfe6caa3a7d634c4db9b"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

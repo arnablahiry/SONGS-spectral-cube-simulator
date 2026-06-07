@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "songs-astro"
+version = "1.0.0"
+description = "Spectral Observations of Non-stationary Galactic Structures — a synthetic IFU spectral cube generator with a theoretical rotating galaxy disk model with diffuse structures"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+  {name = "Arnab Lahiry", email = "arnablahiry08@gmail.com"},
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "torch",
+    "astropy",
+    "matplotlib",
+    "scikit-learn",
+    "astrodendro",
+    "pytest"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/arnablahiry/gal-cube-craft"
