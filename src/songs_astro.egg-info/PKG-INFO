@@ -1,3 +1,22 @@
+Metadata-Version: 2.4
+Name: songs-astro
+Version: 1.0.0
+Summary: Spectral Observations of Non-stationary Galactic Structures — a synthetic IFU spectral cube generator with a theoretical rotating galaxy disk model with diffuse structures
+Author-email: Arnab Lahiry <arnablahiry08@gmail.com>
+Project-URL: Homepage, https://github.com/arnablahiry/gal-cube-craft
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: torch
+Requires-Dist: astropy
+Requires-Dist: matplotlib
+Requires-Dist: scikit-learn
+Requires-Dist: astrodendro
+Requires-Dist: pytest
+Dynamic: license-file
+
 <p align="center">
     <img src="https://raw.githubusercontent.com/arnablahiry/SONGS-spectral-cube-simulator/main/assets/songs_banner.png"
          alt="SONGS banner"
@@ -5,9 +24,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/arnablahiry/SONGS-spectral-cube-simulator/actions/workflows/tests.yml"><img src="https://github.com/arnablahiry/SONGS-spectral-cube-simulator/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>&nbsp;&nbsp;
-  <a href="https://github.com/arnablahiry/SONGS-spectral-cube-simulator/actions/workflows/publish.yml"><img src="https://github.com/arnablahiry/SONGS-spectral-cube-simulator/actions/workflows/publish.yml/badge.svg" alt="Publish to PyPI"></a>&nbsp;&nbsp;
-  <a href="https://github.com/arnablahiry/SONGS-spectral-cube-simulator/actions/workflows/docs.yml"><img src="https://github.com/arnablahiry/SONGS-spectral-cube-simulator/actions/workflows/docs.yml/badge.svg" alt="Deploy API Docs"></a>&nbsp;&nbsp;
+  <a href="https://github.com/arnablahiry/SONGS-spectral-cube-simulator/actions/workflows/ci.yml"><img src="https://github.com/arnablahiry/SONGS-spectral-cube-simulator/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>&nbsp;&nbsp;
+  <a href="https://github.com/arnablahiry/SONGS-spectral-cube-simulator/actions/workflows/deploy_docs_to_pages.yml"><img src="https://github.com/arnablahiry/SONGS-spectral-cube-simulator/actions/workflows/deploy_docs_to_pages.yml/badge.svg" alt="Deploy API Docs"></a>&nbsp;&nbsp;
   <a href="https://pypi.org/project/songs-astro"><img src="https://img.shields.io/pypi/v/songs-astro.svg?cacheSeconds=3600" alt="PyPI version"></a>&nbsp;&nbsp;
   <a href="https://pypi.org/project/songs-astro"><img src="https://img.shields.io/pypi/pyversions/songs-astro.svg" alt="Python versions"></a>&nbsp;&nbsp;
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-brightgreen.svg" alt="License"></a>&nbsp;&nbsp;
@@ -109,15 +127,7 @@ g = songs.init(
 
 ## GUI
 
-SONGS ships a Tkinter-based GUI for interactively building and inspecting a single synthetic spectral cube. The GUI exposes four parameter cards — Initialisation, Central Galaxy, Satellite Properties, and Diffuse Features — with sliders and entry fields for all controls. A built-in **IFU SliceViewer** lets you step through spectral channels with per-source contour overlays, bounding boxes, and an intensity threshold mask. An **Analysis Viewer** shows Moment-0, Moment-1, and the integrated spectrum with per-source toggling.
-
-<p align="center">
-  <img src="assets/songs_panel_dark.png" alt="SONGS GUI — dark theme" width="100%" />
-</p>
-<p align="center">
-  <img src="assets/songs_panel_light.png" alt="SONGS GUI — light theme" width="100%" />
-</p>
-<p align="center"><em>Parameter panels — dark and light themes.</em></p>
+SONGS ships a Tkinter-based GUI for interactively building and inspecting a single synthetic spectral cube. The GUI exposes four parameter cards — Initialisation, Central Galaxy, Satellite, and Diffuse Features — with sliders and entry fields for all controls. A built-in **IFU SliceViewer** lets you step through spectral channels with per-source contour overlays, bounding boxes, and an intensity threshold mask.
 
 **Launch:**
 
@@ -125,14 +135,19 @@ SONGS ships a Tkinter-based GUI for interactively building and inspecting a sing
 python -m songs.gui
 ```
 
-**Controls:** number of galaxies, satellite offset range, beam (bmin/bmaj/BPA), Sérsic index, scale height, flux density Se, velocity dispersion, spatial and spectral resolution, FOV, inclination and position angle. Diffuse cards control halo, bridge, and tidal tail amplitudes, sizes, velocity gradients, and dispersions independently.
+**Controls:** number of galaxies, satellite offset, beam (bmin/bmaj/BPA), Sérsic index, scale height, flux density, velocity dispersion, grid size, spectral channels, inclination, and position angle.
 
-**Workflow:** set parameters → **Generate** → inspect with **Slice** (channel-by-channel IFU viewer) or **Analysis** (moment maps + spectrum) → **Save** (`.npz` or `.pkl`). Generation runs in a background thread with a live log window. The theme button and result buttons are locked during generation and re-enabled on completion; use **Reset** to start a new configuration.
+**Workflow:** set parameters → Generate → inspect Moment-0 / Moment-1 / Spectrum → Save (`.npz` or `.pkl`). Generation runs in a background thread with a live log window.
 
 <p align="center">
-  <img src="assets/songs_gui_windows.png" alt="SONGS — one full run showing the GUI, SliceViewer, and Analysis Viewer" width="100%" />
+  <img src="assets/songs_panel_dark.png" alt="SONGS GUI — dark theme" width="100%" />
 </p>
-<p align="center"><em>A complete run: parameter panel, IFU SliceViewer, and Analysis Viewer (Moment-0, Moment-1, integrated spectrum).</em></p>
+<p align="center"><em>Dark theme — parameter cards and IFU SliceViewer.</em></p>
+
+<p align="center">
+  <img src="assets/songs_panel_light.png" alt="SONGS GUI — light theme" width="100%" />
+</p>
+<p align="center"><em>Light theme — same layout with high-contrast styling.</em></p>
 
 ---
 

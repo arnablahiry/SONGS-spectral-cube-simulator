@@ -1,4 +1,4 @@
-name: CI
+name: Tests
 
 on:
   push:
@@ -8,16 +8,17 @@ on:
 
 jobs:
   test:
+    name: Run Tests
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.10.x', '3.11.x']
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -35,18 +36,8 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install pytest
 
-      - name: Lint (optional)
-        if: always()
-        run: |
-          if command -v flake8 >/dev/null 2>&1; then
-            flake8 || true
-          else
-            echo "flake8 not installed; skipping lint"
-          fi
-
       - name: Run tests
-        run: |
-          pytest -q --maxfail=1
+        run: pytest -v --maxfail=1
 
       - name: Upload pytest logs
         if: always()

@@ -1,0 +1,15 @@
+LICENSE
+README.md
+pyproject.toml
+src/songs/__init__.py
+src/songs/core.py
+src/songs/gui.py
+src/songs/test.py
+src/songs/utils.py
+src/songs/visualise.py
+src/songs_astro.egg-info/PKG-INFO
+src/songs_astro.egg-info/SOURCES.txt
+src/songs_astro.egg-info/dependency_links.txt
+src/songs_astro.egg-info/requires.txt
+src/songs_astro.egg-info/top_level.txt
+tests/test_import.py

@@ -9,7 +9,7 @@ def _read_module_source(path):
 
 def test_package_files_exist():
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    src_dir = os.path.join(root, 'src', 'GalCubeCraft')
+    src_dir = os.path.join(root, 'src', 'songs')
     init_py = os.path.join(src_dir, '__init__.py')
     assert os.path.isdir(src_dir), f"Package folder not found: {src_dir}"
     assert os.path.isfile(init_py), f"__init__.py not found in package: {init_py}"
@@ -19,15 +19,15 @@ def test_init_exports():
     """Lightweight checks on `__init__.py` without importing heavy deps.
 
     We parse the source of `__init__.py` to ensure it exposes the convenience
-    `init` function and references the main `GalCubeCraft` symbol (import or re-export).
+    `init` function and references the main `SONGS` symbol (import or re-export).
     """
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    init_path = os.path.join(root, 'src', 'GalCubeCraft', '__init__.py')
+    init_path = os.path.join(root, 'src', 'songs', '__init__.py')
     src = _read_module_source(init_path)
 
     # Quick textual sanity checks (keeps tests fast and avoids importing heavy libraries)
     assert 'def init' in src or 'def init(' in src
-    assert 'GalCubeCraft' in src
+    assert 'SONGS' in src
 
 
 def test_utils_and_visualise_have_expected_defs():
@@ -35,8 +35,8 @@ def test_utils_and_visualise_have_expected_defs():
     This avoids importing the modules which may require heavy optional deps.
     """
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    utils_path = os.path.join(root, 'src', 'GalCubeCraft', 'utils.py')
-    vis_path = os.path.join(root, 'src', 'GalCubeCraft', 'visualise.py')
+    utils_path = os.path.join(root, 'src', 'songs', 'utils.py')
+    vis_path = os.path.join(root, 'src', 'songs', 'visualise.py')
 
     utils_src = _read_module_source(utils_path)
     vis_src = _read_module_source(vis_path)

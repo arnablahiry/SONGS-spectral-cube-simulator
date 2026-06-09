@@ -60,6 +60,7 @@ _THEMES = {
         PILL_NOR='#1e1e1e', PILL_HOV='#2e2700',
         BTN_DIS_FG='#333322',
         BTN_NOR_BG='#1a1400', BTN_NOR_FG='#d4aa40', BTN_NOR_HOV='#2e2400',
+        REGEN_HOV='#1e1e1e',
         SYM_FG='white',
         LOGO='songs_dark_vertical.png',
         PLOT_BG='#0a0a0a',
@@ -73,6 +74,7 @@ _THEMES = {
         PILL_NOR='#dedad0', PILL_HOV='#f5e898',
         BTN_DIS_FG='#aaa890',
         BTN_NOR_BG='#ede8da', BTN_NOR_FG='#444444', BTN_NOR_HOV='#ddd5c0',
+        REGEN_HOV='#ebebeb',
         SYM_FG='#222222',
         LOGO='songs_light_vertical.png',
         PLOT_BG='#ffffff',
@@ -178,18 +180,23 @@ def rich_label(parent, segments, bg=None, fg="white"):
     base_f  = tkfont.Font(family="Georgia", size=11,
                           weight="bold", slant="italic")
     small_f = tkfont.Font(family="Georgia", size=8, slant="italic")
+    tiny_f  = tkfont.Font(family="Georgia", size=6, slant="italic")
 
     # Baseline sits here (px from top of canvas).
     # Normal text hangs below it; superscripts rise above; subscripts drop further.
     BASELINE   = 13
     SUB_DROP   =  3   # extra pixels below baseline for subscript anchor
+    SUBSUB_DROP = 4   # deeper drop for sub-subscript (e.g. the 'z' in v_z)
     SUP_LIFT   =  5   # pixels above baseline for superscript anchor
-    CANVAS_H   = BASELINE + SUB_DROP + small_f.metrics("linespace") // 2 + 2
+    CANVAS_H   = BASELINE + SUBSUB_DROP + tiny_f.metrics("linespace") // 2 + 2
+
+    def _font(style):
+        return base_f if style == 'n' else (tiny_f if style == 'ss' else small_f)
 
     # Measure total width
     total_w = 4
     for text, style in segments:
-        total_w += (base_f if style == 'n' else small_f).measure(text)
+        total_w += _font(style).measure(text)
     total_w += 4
 
     cv = tk.Canvas(parent, width=total_w, height=CANVAS_H,
@@ -205,6 +212,10 @@ def rich_label(parent, segments, bg=None, fg="white"):
             cv.create_text(x, BASELINE + SUB_DROP, text=text,
                            font=small_f, fill=fg, anchor='sw')
             x += small_f.measure(text)
+        elif style == 'ss':
+            cv.create_text(x, BASELINE + SUBSUB_DROP, text=text,
+                           font=tiny_f, fill=fg, anchor='sw')
+            x += tiny_f.measure(text)
         elif style == 'p':
             cv.create_text(x, BASELINE - SUP_LIFT, text=text,
                            font=small_f, fill=fg, anchor='sw')
@@ -215,12 +226,12 @@ def rich_label(parent, segments, bg=None, fg="white"):
 
 # Import core
 try:
-    from .core import SONGSPhy, DEFAULT_DIFFUSE_PARAMS
+    from .core import SONGSPhy, DEFAULT_DIFFUSE_PARAMS, place_galaxies
 except Exception:
     pkg_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if pkg_root not in sys.path:
         sys.path.insert(0, pkg_root)
-    from songs.core import SONGSPhy, DEFAULT_DIFFUSE_PARAMS
+    from songs.core import SONGSPhy, DEFAULT_DIFFUSE_PARAMS, place_galaxies
 
 # Import visualise helpers (module provides moment0, moment1, spectrum)
 try:
@@ -273,10 +284,19 @@ class TextRedirector:
         self.tag = tag
 
     def write(self, string):
-        self.widget.configure(state="normal")
-        self.widget.insert("end", string, (self.tag,))
-        self.widget.see("end")
-        self.widget.configure(state="disabled")
+        try:
+            if not self.widget.winfo_exists():
+                sys.__stdout__.write(string)
+                return
+            self.widget.configure(state="normal")
+            self.widget.insert("end", string, (self.tag,))
+            self.widget.see("end")
+            self.widget.configure(state="disabled")
+        except Exception:
+            try:
+                sys.__stdout__.write(string)
+            except Exception:
+                pass
 
     def flush(self):
         pass  # Needed for compatibility with sys.stdout
@@ -307,10 +327,22 @@ class LogWindow(tk.Toplevel):
     def __init__(self, master):
         super().__init__(master)
         self.title("Logs")
-        self.text = tk.Text(self)
-        self.text.pack(fill="both", expand=True)
+        self.geometry("700x320")
+
+        _theme = getattr(master, '_theme', 'dark')
+        t = _THEMES.get(_theme, _THEMES['dark'])
+        _acc    = t['ACCENT']
+        _big_bg = t['BIG_BG']
+
+        self.configure(bg=_big_bg)
+        self.text = tk.Text(
+            self, bg=_big_bg, fg=_acc, insertbackground=_acc,
+            font=('Courier', 12), relief='flat', bd=0,
+            selectbackground=_acc, selectforeground=_big_bg,
+            padx=8, pady=6,
+        )
+        self.text.pack(fill="both", expand=True, padx=4, pady=4)
         self.text.tag_configure("stderr", foreground="#e55b5b")
-        # Redirect stdout and stderr
         sys.stdout = TextRedirector(self.text, "stdout")
         sys.stderr = TextRedirector(self.text, "stderr")
         self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -371,11 +403,12 @@ class SONGSGUI(tk.Tk):
 
     """
 
-    def __init__(self):
+    def __init__(self, theme: str = 'dark'):
         super().__init__()
         self.title('SONGS GUI')
-        self.WINDOW_HEIGHT = 780
-        self._theme = 'dark'
+        self.WINDOW_HEIGHT = 840
+        self._theme = theme if theme in ('dark', 'light') else 'dark'
+        self._galaxy_centers = None   # pre-sampled positions, refreshed by Regenerate
         self.resizable(False, False)
 
         # Window icon
@@ -424,6 +457,7 @@ class SONGSGUI(tk.Tk):
         self.container.pack(side='top', fill='both', expand=True, padx=4, pady=4)
 
         self.generator = None
+        self._has_results = False
 
         self._build_widgets()
 
@@ -538,6 +572,7 @@ class SONGSGUI(tk.Tk):
             _make_btn('API Docs', LINK_W,
                       lambda: webbrowser.open('https://arnablahiry.github.io/software/songs')),
         ]
+        self._theme_btn = btns[0]
 
         # Place in a horizontal row, bottom of banner
         widths = [THEME_W, LINK_W, LINK_W]
@@ -550,7 +585,58 @@ class SONGSGUI(tk.Tk):
         for _, fn in self._banner_btns:
             fn()
 
+    def _disable_theme_btn(self):
+        cv = getattr(self, '_theme_btn', None)
+        if cv is None:
+            return
+        _t = _THEMES[self._theme]
+        _dim = _t.get('BTN_DIS_FG', '#555555')
+        cv.delete('all')
+        cv.create_rectangle(1, 1, cv.winfo_reqwidth()-1, cv.winfo_reqheight()-1,
+                            fill=_t['BG'], outline=_dim, width=1)
+        cv.create_text(cv.winfo_reqwidth()//2, cv.winfo_reqheight()//2,
+                       text=cv._lbl_text, fill=_dim, font=cv._lbl_font)
+        cv.unbind('<ButtonRelease-1>')
+        cv.unbind('<Enter>')
+        cv.unbind('<Leave>')
+        cv.configure(cursor='arrow')
+
+    def _enable_theme_btn(self):
+        cv = getattr(self, '_theme_btn', None)
+        if cv is None:
+            return
+        # Re-bind via _place_banner_btns (simplest: just redraw the banner)
+        self._place_banner_btns()
+
+    # Names of every tk.Var that must survive a theme switch
+    _VAR_NAMES = [
+        'bmin_var', 'bmaj_var', 'bpa_var',
+        'spatial_resolution', 'n_var', 'hz_var', 'Se_var', 'Re_var', 'sigma_v_var',
+        'fov', 'spectral_resolution', 'angle_x_var', 'angle_y_var', 'n_gals_var',
+        'halo_Se_factor_var', 'halo_Re_factor_var', 'halo_sigma_vz_var',
+        'bridge_Se_factor_var', 'bridge_width_start_factor_var',
+        'bridge_width_end_factor_var', 'bridge_sigma_vz_var',
+        'tail_Se_factor_var', 'tail_vel_gradient_var', 'tail_curvature_var',
+        'tail_width_factor_var', 'tail_sigma_vz_var',
+        'sat_brightness_frac_var', 'sat_Re_frac_var', 'sat_offset_min_var', 'sat_offset_max_var',
+    ]
+
+    def _save_var_state(self) -> dict:
+        return {name: getattr(self, name).get()
+                for name in self._VAR_NAMES
+                if hasattr(self, name)}
+
+    def _restore_var_state(self, state: dict):
+        for name, value in state.items():
+            var = getattr(self, name, None)
+            if var is not None:
+                try:
+                    var.set(value)
+                except Exception:
+                    pass
+
     def _toggle_theme(self):
+        saved = self._save_var_state()
         self._theme = 'light' if self._theme == 'dark' else 'dark'
         t = _THEMES[self._theme]
         self.configure(bg=t['BG'])
@@ -560,6 +646,7 @@ class SONGSGUI(tk.Tk):
         self._load_logo()
         self._place_banner_btns()
         self._rebuild_widgets()
+        self._restore_var_state(saved)
         import songs.visualise as _vis
         _vis._VIEWER_THEME = self._theme
 
@@ -706,27 +793,14 @@ class SONGSGUI(tk.Tk):
         canvas.draw()
         canvas.get_tk_widget().pack(fill='both', expand=True)
 
-    def show_moments(self):
-        if not self.generator:
+    def show_analysis(self):
+        """Open the combined Analysis viewer (moments + spectrum + source checkboxes)."""
+        if not (self.generator and getattr(self.generator, 'results', None)):
             return
         try:
-            # Generate the figures using the 'Agg' backend (already set)
-            fig0, _ = moment0(self.generator.results, idx=0, save=False)
-            self._popup_figure("Moment 0", fig0)
-            
-            fig1, _ = moment1(self.generator.results, idx=0, save=False)
-            self._popup_figure("Moment 1", fig1)
+            AnalysisViewer(self, self.generator.results, idx=0)
         except Exception as e:
-            print(f"Error displaying moments: {e}")
-
-    def show_spectra(self):
-        if not self.generator:
-            return
-        try:
-            fig, _ = spectrum(self.generator.results, idx=0, save=False)
-            self._popup_figure("Integrated Spectrum", fig)
-        except Exception as e:
-            print(f"Error displaying spectrum: {e}")
+            messagebox.showerror('Analysis viewer error', str(e))
 
 
     def show_slice(self):
@@ -737,30 +811,6 @@ class SONGSGUI(tk.Tk):
             except Exception as e:
                 messagebox.showerror('Slice viewer error', str(e))
 
-    def show_mom1(self):
-        if self.generator:
-            fig, ax = moment1(self.generator.results, idx=0, save=False)
-            try: 
-                import matplotlib
-                matplotlib.use('TkAgg')
-                plt.figure(fig.number)
-                plt.show(block=False)
-                matplotlib.use('Agg')
-            except Exception: 
-                pass
-
-    '''def show_spectra(self):
-        if self.generator:
-            fig, ax = spectrum(self.generator.results, idx=0, save=False)
-            try: 
-                import matplotlib
-                matplotlib.use('TkAgg')
-                plt.figure(fig.number)
-                plt.show(block=False)
-                matplotlib.use('Agg')
-            except Exception: 
-                pass'''
-
     def reset_instance(self):
         """Reset the GUI to a fresh state and disable visualisation/save.
 
@@ -769,7 +819,7 @@ class SONGSGUI(tk.Tk):
         values. Buttons that depend on generated results are disabled.
         """
         # Disable all result buttons
-        for _b in (self.moments_btn, self.spectra_btn, self.slice_btn,
+        for _b in (self.analysis_btn, self.slice_btn,
                    self.save_btn, self.new_instance_btn):
             try:
                 self._disable_btn(_b)
@@ -780,6 +830,8 @@ class SONGSGUI(tk.Tk):
                 child.destroy()
 
         self.generator = None
+        self._has_results = False
+        self._enable_theme_btn()
 
     def _find_scale_in(self, widget):
         """Recursively find a ttk.Scale inside a widget tree.
@@ -860,10 +912,11 @@ class SONGSGUI(tk.Tk):
         self.bmin_var = tk.DoubleVar(value=11.0)
         self.bmaj_var = tk.DoubleVar(value=13.0)
         self.bpa_var = tk.DoubleVar(value=20.0)
-        self.spatial_resolution = tk.DoubleVar(value=3.8)
+        self.spatial_resolution = tk.DoubleVar(value=2.75)
         self.n_var = tk.DoubleVar(value=1.0)
         self.hz_var = tk.DoubleVar(value=0.8)
         self.Se_var = tk.DoubleVar(value=0.1)
+        self.Re_var = tk.DoubleVar(value=19.0)   # kpc
         self.sigma_v_var = tk.DoubleVar(value=40.0)
         self.fov = tk.DoubleVar(value=275.0)   # in kpc
         self.spectral_resolution = tk.IntVar(value=20)
@@ -874,22 +927,27 @@ class SONGSGUI(tk.Tk):
         # --- Diffuse-emission knobs (defaults pulled from core's DEFAULT_DIFFUSE_PARAMS) ---
         dp = DEFAULT_DIFFUSE_PARAMS
         # Halo
-        self.halo_Se_factor_var = tk.DoubleVar(value=float(dp.get('halo_Se_factor', 0.065)))
-        self.halo_Re_factor_var = tk.DoubleVar(value=float(dp.get('halo_Re_factor', 3.0)))
+        self.halo_Se_factor_var = tk.DoubleVar(value=float(dp.get('halo_Se_factor', 0.03)))
+        self.halo_Re_factor_var = tk.DoubleVar(value=float(dp.get('halo_Re_factor', 2.0)))
         self.halo_sigma_vz_var  = tk.DoubleVar(value=float(dp.get('halo_sigma_vz', 70.0)))
         # Bridges
         self.bridge_Se_factor_var          = tk.DoubleVar(value=float(dp.get('bridge_Se_factor', 0.05)))
-        self.bridge_width_start_factor_var = tk.DoubleVar(value=float(dp.get('bridge_width_start_factor', 1.5)))
-        self.bridge_width_end_factor_var   = tk.DoubleVar(value=float(dp.get('bridge_width_end_factor', 1.0)))
+        self.bridge_width_start_factor_var = tk.DoubleVar(value=float(dp.get('bridge_width_start_factor', 1.0)))
+        self.bridge_width_end_factor_var   = tk.DoubleVar(value=float(dp.get('bridge_width_end_factor', 0.8)))
+        self.bridge_sigma_vz_var           = tk.DoubleVar(value=float(dp.get('bridge_sigma_vz', 70.0)))
         # Tails / streamers
         self.tail_Se_factor_var     = tk.DoubleVar(value=float(dp.get('tail_Se_factor', 0.4)))
+        self.tail_curvature_var     = tk.DoubleVar(value=float(dp.get('tail_curvature', 0.15)))
+        self.tail_width_factor_var  = tk.DoubleVar(value=float(dp.get('tail_width_factor', 1.2)))
+        self.tail_sigma_vz_var      = tk.DoubleVar(value=float(dp.get('tail_sigma_vz', 80.0)))
         # Streamer (channel-traversing trajectory) extras
-        self.tail_vel_gradient_var          = tk.DoubleVar(value=float(dp.get('tail_vel_gradient', 0.5)))
+        self.tail_vel_gradient_var  = tk.DoubleVar(value=float(dp.get('tail_vel_gradient', 80.0)))
 
 
         # New: satellite size fraction (max satellite-to-central ratio for Re,
         # hz, Se). Greyed out when only one galaxy is requested.
         self.sat_brightness_frac_var = tk.DoubleVar(value=0.15)
+        self.sat_Re_frac_var = tk.DoubleVar(value=0.4)  # avg satellite Re as fraction of central Re
 
         # ── Colour scheme — pulled from current theme ──────────────────────────
         _t          = _THEMES[self._theme]
@@ -952,13 +1010,13 @@ class SONGSGUI(tk.Tk):
         def small_card(parent, title=None):
             outer = tk.Frame(parent, bg=_SM_BORDER, padx=1, pady=1)
             outer.pack(fill='x', padx=6, pady=3)
-            inner = tk.Frame(outer, bg=_CARD_BG, padx=6, pady=10)
+            inner = tk.Frame(outer, bg=_CARD_BG, padx=5, pady=6)
             inner.pack(fill='both', expand=True)
             if title:
                 _lbl = tk.Label(inner, text=title, bg=_CARD_BG, fg=_TEXT,
                                 font=_FONT_SM)
                 _lbl._orig_fg = _TEXT
-                _lbl.pack(anchor='w', pady=(0, 6))
+                _lbl.pack(anchor='w', pady=(2, 5))
             return inner
 
         def slider_with_symbol(parent, segs, var, from_, to,
@@ -1047,7 +1105,7 @@ class SONGSGUI(tk.Tk):
         self.pix_scale_var_slider = sc.winfo_children()[-1]
 
         sc = small_card(bc1, "Spectral Resolution [km/s]")
-        slider_with_symbol(sc, [("Δ","n"),("vz","s")], self.spectral_resolution, 5, 40, resolution=5, fmt="{:d}", integer=True)
+        slider_with_symbol(sc, [("Δ","n"),("v","s"),("z","ss")], self.spectral_resolution, 5, 40, resolution=5, fmt="{:d}", integer=True)
         self.spec_slider = sc.winfo_children()[-1]
 
         sc = small_card(bc1, "Field of View [kpc]")
@@ -1092,7 +1150,7 @@ class SONGSGUI(tk.Tk):
             bmaj_kpc = max(float(self.bmaj_var.get()), 0.01)
             bpa_deg  = float(self.bpa_var.get())
 
-            fov_px   = fov_kpc / res_kpc             # grid pixels for this resolution
+            fov_px   = int(fov_kpc / res_kpc)         # grid pixels — matches SONGSPhy (truncation)
             scale    = S / fov_px                    # canvas px per grid px
             bmin_px  = bmin_kpc / res_kpc            # beam minor in grid px
             bmaj_px  = bmaj_kpc / res_kpc            # beam major in grid px
@@ -1102,7 +1160,7 @@ class SONGSGUI(tk.Tk):
             semi_a = max(bmin_px * scale / 2, 2.0)  # minor semi-axis in canvas px
             semi_b = max(bmaj_px * scale / 2, 2.0)  # major semi-axis in canvas px
             ecx    = marg + semi_b + 2
-            ecy    = S - marg - semi_b - 2
+            ecy    = S - marg - semi_b + 10          # slightly lower than default
 
             # Ellipse polygon (180 pts, no spline → crisp)
             theta_rot = _math.radians(-bpa_deg)   # Tkinter y-down convention
@@ -1133,32 +1191,57 @@ class SONGSGUI(tk.Tk):
                                  text=f"{bmin_px:.1f}×{bmaj_px:.1f} px",
                                  fill=_ACCENT, font=_fnt, anchor='w')
 
-            # ── scalebar (top-right, always half the pixel FOV = S/2 wide) ───
-            bar_px_grid = fov_px / 2    # grid pixels — changes with res
-            bar_kpc_val = fov_kpc / 2   # kpc — changes with fov slider
-            bar_cv_px   = S / 2         # always half the canvas
+            # ── scalebar (top-right) ─────────────────────────────────────────
+            bar_px_grid = fov_px / 2.0
+            bar_kpc_val = fov_kpc / 2
+            bar_cv_px   = S / 2
 
             bx1 = S - marg
             bx0 = bx1 - bar_cv_px
-            by  = marg + 26
+            by  = marg + 8
 
             for bx in (bx0, bx1):
-                _prev_cv.create_line(bx, by - 5, bx, by + 5,
+                _prev_cv.create_line(bx, by - 4, bx, by + 4,
                                      fill=_ACCENT, width=1.5)
             _prev_cv.create_line(bx0, by, bx1, by, fill=_ACCENT, width=1.5)
 
-            _prev_cv.create_text((bx0 + bx1) / 2, by - 13,
+            _prev_cv.create_text((bx0 + bx1) / 2, by - 10,
                                  text=f"{bar_px_grid:.0f} px",
                                  fill=_ACCENT, font=_fnt)
-            _prev_cv.create_text((bx0 + bx1) / 2, by + 13,
+            _prev_cv.create_text((bx0 + bx1) / 2, by + 10,
                                  text=f"{bar_kpc_val:.0f} kpc",
                                  fill=_ACCENT, font=_fnt)
 
-            # ── center watermark ─────────────────────────────────────────────
-            _prev_cv.create_text(S / 2, S / 2,
-                                 text="Spatial preview of\nthe Spectral Cube\n(in pixel units)",
-                                 fill=_ACCENT, font=('Helvetica', 8),
-                                 justify='center')
+            # ── galaxy markers ───────────────────────────────────────────────
+            _gal_col = _t['SYM_FG']
+            _lbl_fnt = ('Helvetica', 7, 'bold')
+            if self._galaxy_centers is not None and len(self._galaxy_centers) > 0:
+                for _gi, _gc in enumerate(self._galaxy_centers):
+                    _gx = (_gc[1] / fov_px) * S
+                    _gy = S - (_gc[0] / fov_px) * S
+                    if _gi == 0:
+                        # Central: hollow circle then filled dot on top (both centred on _gx, _gy)
+                        _cr, _dr = 7, 2
+                        _prev_cv.create_oval(_gx - _cr, _gy - _cr, _gx + _cr, _gy + _cr,
+                                             fill='', outline=_gal_col, width=1.5, tags='gal')
+                        _prev_cv.create_oval(_gx - _dr, _gy - _dr, _gx + _dr, _gy + _dr,
+                                             fill=_gal_col, outline='', tags='gal')
+                        _prev_cv.create_text(_gx + _cr + 4, _gy,
+                                             text='C', fill=_gal_col, font=_lbl_fnt,
+                                             anchor='w', tags='gal')
+                    else:
+                        # Satellite: hollow circle
+                        _sr = 4
+                        _prev_cv.create_oval(_gx - _sr, _gy - _sr, _gx + _sr, _gy + _sr,
+                                             fill='', outline=_gal_col, width=1.2, tags='gal')
+                        _prev_cv.create_text(_gx + _sr + 4, _gy,
+                                             text=f'S{_gi}', fill=_gal_col, font=_lbl_fnt,
+                                             anchor='w', tags='gal')
+            else:
+                _prev_cv.create_text(S / 2, S / 2,
+                                     text="Spatial preview of\nthe Spectral Cube\n(in pixel units)",
+                                     fill=_ACCENT, font=('Helvetica', 8),
+                                     justify='center')
 
         def _on_prev_configure(e):
             w = e.width
@@ -1169,11 +1252,39 @@ class SONGSGUI(tk.Tk):
                 _prev_cv.configure(height=w)   # force square directly on canvas
             _prev_cv.after_idle(_draw_fov_preview)
 
+        # Keep a reference so _sample_positions can trigger a redraw
+        self._draw_fov_preview_ref = _draw_fov_preview
+
         _prev_cv.bind('<Configure>', _on_prev_configure)
         for _pv in (self.fov, self.spatial_resolution,
                     self.bmin_var, self.bmaj_var, self.bpa_var):
             _pv.trace_add('write', _draw_fov_preview)
-        _prev_cv.after(150, _draw_fov_preview)
+
+        def _resample_and_redraw(*_):
+            """Re-draw positions when n_gals or offset range changes."""
+            self._sample_positions(redraw=True)
+
+        self.n_gals_var.trace_add('write', _resample_and_redraw)
+        self._resample_and_redraw = _resample_and_redraw  # wired after sat vars exist
+        # Re-sample whenever anything that affects grid_size changes
+        self.fov.trace_add('write', _resample_and_redraw)
+        self.spatial_resolution.trace_add('write', _resample_and_redraw)
+
+        # Regenerate button — themed to match the main button bar
+        _regen_hov = _t['REGEN_HOV']
+        _regen_cmd = lambda: self._sample_positions(redraw=True)
+        _regen_btn = tk.Label(
+            bc1, text='↺  Regenerate positions',
+            bg=_CARD_BG, fg=_ACCENT,
+            font=('Helvetica', 9, 'bold'), padx=8, pady=6, cursor='pointinghand',
+        )
+        _regen_btn.pack(fill='x', padx=6, pady=(0, 6))
+        _regen_btn.bind('<Enter>', lambda _: _regen_btn.configure(bg=_regen_hov))
+        _regen_btn.bind('<Leave>', lambda _: _regen_btn.configure(bg=_CARD_BG))
+        _regen_btn.bind('<ButtonRelease-1>', lambda _: _regen_cmd())
+
+        _prev_cv.after(150, lambda: (self._sample_positions(redraw=False),
+                                     _draw_fov_preview()))
 
         # ──────────────────────────────────────────────────────────────────────
         # MIDDLE COLUMN: Central Galaxy (top) + Satellite Properties (below)
@@ -1187,16 +1298,24 @@ class SONGSGUI(tk.Tk):
         slider_with_symbol(sc, [("n","n")], self.n_var, 0.5, 1.5, resolution=0.01, fmt="{:.3f}")
         self.n_slider = sc.winfo_children()[-1]
 
-        sc = small_card(bc2, "Scale height [kpc]")
-        slider_with_symbol(sc, [("h","n"),("z","s")], self.hz_var, 0.4, 9.0, resolution=0.01, fmt="{:.3f}")
-        self.hz_slider = sc.winfo_children()[-1]
+        sc = small_card(bc2, "Effective radius and scale height [kpc, kpc]")
+        _re_row = tk.Frame(sc, bg=_CARD_BG)
+        _re_row.pack(fill='x', pady=(0, 6))
+        rich_label(_re_row, [("R","n"),("e","s")], bg=_CARD_BG, fg=_t['SYM_FG']).pack(side='left', padx=(0, 4))
+        self.Re_slider = self.make_slider(_re_row, "", self.Re_var, 1.0, 60.0, resolution=0.5, fmt="{:.1f}")
+        self.Re_slider.pack(side='left', fill='x', expand=True)
+        _hz_row = tk.Frame(sc, bg=_CARD_BG)
+        _hz_row.pack(fill='x', pady=(0, 2))
+        rich_label(_hz_row, [("h","n"),("z","s")], bg=_CARD_BG, fg=_t['SYM_FG']).pack(side='left', padx=(0, 4))
+        self.hz_slider = self.make_slider(_hz_row, "", self.hz_var, 0.4, 9.0, resolution=0.01, fmt="{:.3f}")
+        self.hz_slider.pack(side='left', fill='x', expand=True)
 
         sc = small_card(bc2, "Surface brightness [Jy]")
         slider_with_symbol(sc, [("S","n"),("e","s")], self.Se_var, 0.01, 1.0, resolution=0.01, fmt="{:.3f}")
         self.Se_slider = sc.winfo_children()[-1]
 
         sc = small_card(bc2, "Velocity dispersion [km/s]")
-        slider_with_symbol(sc, [("σ","n"),("vz","s")], self.sigma_v_var, 30.0, 60.0, resolution=0.1, fmt="{:.1f}")
+        slider_with_symbol(sc, [("σ","n"),("v","s"),("z","ss")], self.sigma_v_var, 30.0, 60.0, resolution=0.1, fmt="{:.1f}")
         self.sigma_slider = sc.winfo_children()[-1]
 
         sc = small_card(bc2, "X & Y Inclination Angles [deg, deg]")
@@ -1222,8 +1341,13 @@ class SONGSGUI(tk.Tk):
         self.sat_frac_slider_frame = sc.winfo_children()[-1]
         self.sat_frac_scale = find_scale(self.sat_frac_slider_frame)
 
+        sc = small_card(bc3, "Satellite Re fraction")
+        slider_with_symbol(sc, [("R","n"),("e,sat","s")], self.sat_Re_frac_var, 0.1, 0.9, resolution=0.05, fmt="{:.2f}")
+
         self.sat_offset_max_var = tk.DoubleVar(value=180.0)
         self.sat_offset_min_var = tk.DoubleVar(value=80.0)
+        self.sat_offset_min_var.trace_add('write', self._resample_and_redraw)
+        self.sat_offset_max_var.trace_add('write', self._resample_and_redraw)
 
         sc = small_card(bc3, "Min & Max Offset from Central [kpc, kpc]")
         for _segs, _var, _f_attr, _s_attr, _lo, _hi in [
@@ -1245,46 +1369,67 @@ class SONGSGUI(tk.Tk):
         # ──────────────────────────────────────────────────────────────────────
         bc4 = big_card(cards_row, "Diffuse Features")
 
-        sc = small_card(bc4, "Halo flux amplitude")
+        sc = small_card(bc4, "Diffuse halo flux (fraction of central)")
         slider_with_symbol(sc, [("S","n"),("e,halo","s"),(" / S","n"),("e,c","s")],
                            self.halo_Se_factor_var, 0.0, 0.3, resolution=0.005, fmt="{:.3f}")
         self.halo_Se_slider = sc.winfo_children()[-1]
 
-        sc = small_card(bc4, "Halo effective radius")
+        sc = small_card(bc4, "Diffuse halo effective radius (fraction of central)")
         slider_with_symbol(sc, [("R","n"),("e,halo","s"),(" / R","n"),("e,c","s")],
                            self.halo_Re_factor_var, 1.0, 5.0, resolution=0.1, fmt="{:.1f}")
         self.halo_Re_slider = sc.winfo_children()[-1]
-
-        sc = small_card(bc4, "Halo vel. dispersion [km/s]")
-        slider_with_symbol(sc, [("σ","n"),("vz,halo","s")],
-                           self.halo_sigma_vz_var, 0.0, 150.0, resolution=5.0, fmt="{:.0f}")
-        self.halo_sigma_slider = sc.winfo_children()[-1]
 
         sc = small_card(bc4, "Bridge flux amplitude")
         slider_with_symbol(sc, [("S","n"),("e,br","s"),(" / S","n"),("e,s","s")],
                            self.bridge_Se_factor_var, 0.0, 0.3, resolution=0.005, fmt="{:.3f}")
         self.bridge_Se_slider = sc.winfo_children()[-1]
 
-        sc = small_card(bc4, "Bridge width (halo end)")
-        slider_with_symbol(sc, [("σ","n"),("br,h","s"),(" / R","n"),("e,c","s")],
-                           self.bridge_width_start_factor_var, 0.5, 4.0, resolution=0.1, fmt="{:.1f}")
-        self.bridge_w0_slider = sc.winfo_children()[-1]
+        sc = small_card(bc4, "Bridge width fractions (central & satellite ends)")
+        _bw0_row = tk.Frame(sc, bg=_CARD_BG)
+        _bw0_row.pack(fill='x', pady=(0, 6))
+        rich_label(_bw0_row, [("σ","n"),("br,h","s"),(" / R","n"),("e,c","s")],
+                   bg=_CARD_BG, fg=_t['SYM_FG']).pack(side='left', padx=(0, 4))
+        self.bridge_w0_slider = self.make_slider(_bw0_row, "", self.bridge_width_start_factor_var,
+                                                 0.5, 4.0, resolution=0.1, fmt="{:.1f}")
+        self.bridge_w0_slider.pack(side='left', fill='x', expand=True)
+        _bw1_row = tk.Frame(sc, bg=_CARD_BG)
+        _bw1_row.pack(fill='x', pady=(0, 2))
+        rich_label(_bw1_row, [("σ","n"),("br,s","s"),(" / R","n"),("e,s","s")],
+                   bg=_CARD_BG, fg=_t['SYM_FG']).pack(side='left', padx=(0, 4))
+        self.bridge_w1_slider = self.make_slider(_bw1_row, "", self.bridge_width_end_factor_var,
+                                                 0.3, 3.0, resolution=0.1, fmt="{:.1f}")
+        self.bridge_w1_slider.pack(side='left', fill='x', expand=True)
 
-        sc = small_card(bc4, "Bridge width (sat. end)")
-        slider_with_symbol(sc, [("σ","n"),("br,s","s"),(" / R","n"),("e,s","s")],
-                           self.bridge_width_end_factor_var, 0.3, 3.0, resolution=0.1, fmt="{:.1f}")
-        self.bridge_w1_slider = sc.winfo_children()[-1]
-
-        sc = small_card(bc4, "Streamer flux amplitude")
-        slider_with_symbol(sc, [("S","n"),("e,tail","s"),(" / S","n"),("e,s","s")],
+        sc = small_card(bc4, "Tidal tail flux fraction")
+        slider_with_symbol(sc, [("S","n"),("e,tail","s"),(" / S","n"),("e,s","c|s")],
                            self.tail_Se_factor_var, 0.0, 1.0, resolution=0.02, fmt="{:.2f}")
         self.tail_Se_slider = sc.winfo_children()[-1]
 
-        sc = small_card(bc4, "Streamer velocity scale")
-        slider_with_symbol(sc, [(" × Δv","n"),("sys","s")],
-                           self.tail_vel_gradient_var, 0.0, 2.0, resolution=0.05, fmt="{:.2f}",
-                           symbol_side='right')
+        sc = small_card(bc4, "Tidal tail velocity scale [km/s]")
+        slider_with_symbol(sc, [("Δv","n"),("tail","s")],
+                           self.tail_vel_gradient_var, 0.0, 300.0, resolution=5.0, fmt="{:.0f}")
         self.tail_vel_grad_slider = sc.winfo_children()[-1]
+
+        sc = small_card(bc4, "Tidal tail curvature")
+        slider_with_symbol(sc, [("κ","n"),("tail","s")],
+                           self.tail_curvature_var, 0.0, 0.5, resolution=0.01, fmt="{:.2f}")
+        self.tail_curv_slider = sc.winfo_children()[-1]
+
+        sc = small_card(bc4, "Tidal tail width (× Re)")
+        slider_with_symbol(sc, [("σ","n"),("tail","s"),(" / R","n"),("e","s")],
+                           self.tail_width_factor_var, 0.1, 5.0, resolution=0.1, fmt="{:.1f}")
+        self.tail_width_slider = sc.winfo_children()[-1]
+
+        sc = small_card(bc4, "Diffuse velocity dispersion [km/s]")
+        for _segs, _var in [
+            ([("σ","n"),("v","s"),("z","ss"),(", halo","s")], self.halo_sigma_vz_var),
+            ([("σ","n"),("v","s"),("z","ss"),(", br","s")],   self.bridge_sigma_vz_var),
+            ([("σ","n"),("v","s"),("z","ss"),(", tail","s")], self.tail_sigma_vz_var),
+        ]:
+            _row = tk.Frame(sc, bg=_CARD_BG)
+            _row.pack(fill='x', pady=(0, 6))
+            rich_label(_row, _segs, bg=_CARD_BG, fg=_t['SYM_FG']).pack(side='left', padx=(0, 4))
+            self.make_slider(_row, "", _var, 0.0, 200.0, resolution=5.0, fmt="{:.0f}").pack(side='left', fill='x', expand=True)
 
         # ── Satellite-dependent greyout ──────────────────────────────────────
         def _update_min_range(*args):
@@ -1327,25 +1472,45 @@ class SONGSGUI(tk.Tk):
 
         def _update_sat_dependent(*args):
             active = self.n_gals_var.get() > 1
-            state  = tk.NORMAL if active else tk.DISABLED
-            dim_fg = "#2a2a1a"   # dimmed text — keep bg unchanged so design stays intact
+            _t2 = _THEMES[self._theme]
+            _dim_fg  = _t2.get('BTN_DIS_FG', '#555555')
+            _dim_bg  = _t2['BG']
 
             def _set_state(w):
-                # Only dim foreground text when inactive; leave backgrounds alone.
-                try:
-                    w.configure(state=state)
-                except Exception: pass
                 if not active:
-                    try: w.configure(fg=dim_fg)
+                    # Save original colors on first dim
+                    if not hasattr(w, '_sat_orig_fg'):
+                        try: w._sat_orig_fg = w.cget('fg')
+                        except Exception: w._sat_orig_fg = None
+                    if not hasattr(w, '_sat_orig_bg'):
+                        try: w._sat_orig_bg = w.cget('bg')
+                        except Exception: w._sat_orig_bg = None
+                    try: w.configure(state=tk.DISABLED)
+                    except Exception: pass
+                    if w._sat_orig_fg is not None:
+                        try: w.configure(fg=_dim_fg)
+                        except Exception: pass
+                    if w._sat_orig_bg is not None:
+                        try: w.configure(bg=_dim_bg)
+                        except Exception: pass
+                    try: w.configure(cursor='arrow')
                     except Exception: pass
                 else:
-                    # Restore fg — use _orig_fg if stored, otherwise infer by type
-                    if isinstance(w, tk.Scale):
-                        try: w.configure(fg=_TEXT, bg=_ACCENT, activebackground="#f0c040")
+                    try: w.configure(state=tk.NORMAL)
+                    except Exception: pass
+                    orig_fg = getattr(w, '_sat_orig_fg', None)
+                    orig_bg = getattr(w, '_sat_orig_bg', None)
+                    if orig_fg is not None:
+                        try: w.configure(fg=orig_fg)
                         except Exception: pass
-                    elif isinstance(w, tk.Label):
-                        orig = getattr(w, '_orig_fg', None)
-                        try: w.configure(fg=orig if orig else _TEXT)
+                    if orig_bg is not None:
+                        try: w.configure(bg=orig_bg)
+                        except Exception: pass
+                    try: w.configure(cursor='')
+                    except Exception: pass
+                    # clear saved so colors are re-sampled next time
+                    for attr in ('_sat_orig_fg', '_sat_orig_bg'):
+                        try: delattr(w, attr)
                         except Exception: pass
                 for child in w.winfo_children():
                     _set_state(child)
@@ -1415,10 +1580,9 @@ class SONGSGUI(tk.Tk):
         _gen_hov = "#e8c040" if self._theme == 'dark' else "#7a5800"
         self.generate_btn     = _mk_btn(btn_frame, 'Generate', self.generate,
                                         bg=_ACCENT, fg=_gen_fg, hov=_gen_hov)
-        self.slice_btn        = _mk_btn(btn_frame, 'Slice',    self.show_slice,    disabled=True)
-        self.moments_btn      = _mk_btn(btn_frame, 'Moments',  self.show_moments,  disabled=True)
-        self.spectra_btn      = _mk_btn(btn_frame, 'Spectrum', self.show_spectra,  disabled=True)
-        self.save_btn         = _mk_btn(btn_frame, 'Save',     self.save_sim,      disabled=True)
+        self.slice_btn        = _mk_btn(btn_frame, 'Slice',    self.show_slice,     disabled=True)
+        self.analysis_btn     = _mk_btn(btn_frame, 'Analysis', self.show_analysis,  disabled=True)
+        self.save_btn         = _mk_btn(btn_frame, 'Save',     self.save_sim,       disabled=True)
         self.new_instance_btn = _mk_btn(btn_frame, 'Reset',    self.reset_instance, disabled=True)
 
 
@@ -1442,7 +1606,8 @@ class SONGSGUI(tk.Tk):
                     self.bridge_Se_factor_var, self.bridge_width_start_factor_var,
                     self.bridge_width_end_factor_var,
                     self.tail_Se_factor_var,
-                    self.tail_vel_gradient_var]:
+                    self.tail_vel_gradient_var,
+                    self.tail_curvature_var]:
             if hasattr(var, 'trace_add'):
                 var.trace_add('write', _auto_update_generator)
             else:
@@ -1476,10 +1641,11 @@ class SONGSGUI(tk.Tk):
         n_gals = int(self.n_gals_var.get())
         fov = int(self.fov.get())
         spectral_resolution = int(self.spectral_resolution.get())
-        spatial_resolution = int(self.spatial_resolution.get())
+        spatial_resolution = max(float(self.spatial_resolution.get()), 0.01)
         central_n = float(self.n_var.get())
         central_hz = float(self.hz_var.get())
         central_Se = float(self.Se_var.get())
+        central_Re_kpc = float(self.Re_var.get())
         central_gal_x_angle = int(self.angle_x_var.get())
         central_gal_y_angle = int(self.angle_y_var.get())
         offset_gals = (float(self.sat_offset_min_var.get()), float(self.sat_offset_max_var.get()))
@@ -1489,7 +1655,7 @@ class SONGSGUI(tk.Tk):
         # specified central values. For multiple galaxies we generate
         # satellite properties using simple random draws so the
         # generator receives arrays of length ``n_gals`` (primary + satellites).
-        all_Re = [5/spatial_resolution]
+        all_Re = [central_Re_kpc / spatial_resolution]
         all_hz = [central_hz]
         all_Se = [central_Se]
         all_gal_x_angles = [central_gal_x_angle]
@@ -1500,8 +1666,11 @@ class SONGSGUI(tk.Tk):
             n_sat = n_gals - 1
             rng = np.random.default_rng()
 
-            # Satellites are physically smaller (Re, hz fixed ratio).
-            sat_Re = list(rng.uniform(all_Re[0] / 3, all_Re[0] / 2, n_sat))
+            # Satellites Re: mean fraction of central Re, ±20% scatter
+            _re_frac = float(np.clip(self.sat_Re_frac_var.get(), 0.05, 1.0))
+            _re_lo = max(_re_frac - 0.1, 0.05) * all_Re[0]
+            _re_hi = min(_re_frac + 0.1, 1.0)  * all_Re[0]
+            sat_Re = list(rng.uniform(_re_lo, _re_hi, n_sat))
             sat_hz = list(rng.uniform(all_hz[0] / 3, all_hz[0] / 2, n_sat))
 
             # sat_brightness_frac scales Se relative to central, compensating for
@@ -1548,9 +1717,12 @@ class SONGSGUI(tk.Tk):
             'bridge_Se_factor': float(self.bridge_Se_factor_var.get()),
             'bridge_width_start_factor': float(self.bridge_width_start_factor_var.get()),
             'bridge_width_end_factor': float(self.bridge_width_end_factor_var.get()),
+            'bridge_sigma_vz': float(self.bridge_sigma_vz_var.get()),
             'tail_Se_factor': float(self.tail_Se_factor_var.get()),
-            # Streamer knobs
             'tail_vel_gradient': float(self.tail_vel_gradient_var.get()),
+            'tail_curvature': float(self.tail_curvature_var.get()),
+            'tail_width_factor': float(self.tail_width_factor_var.get()),
+            'tail_sigma_vz': float(self.tail_sigma_vz_var.get()),
         })
 
         params = dict(
@@ -1570,6 +1742,21 @@ class SONGSGUI(tk.Tk):
                     diffuse_params=diffuse_params,
                 )
         return params
+
+    def _sample_positions(self, redraw=True):
+        """Draw new random satellite positions from current offset/FOV settings."""
+        n_gals = int(self.n_gals_var.get())
+        fov = int(self.fov.get())
+        spatial_resolution = max(float(self.spatial_resolution.get()), 0.01)
+        grid_size = int(fov / spatial_resolution)   # matches SONGSPhy: truncation, not round
+        # init_grid_size mirrors core.py logic
+        _igs = (31 / 64) * grid_size
+        init_grid_size = int(_igs) - 1 if int(_igs) % 2 != 0 else int(_igs)
+        offset_gals = (float(self.sat_offset_min_var.get()) / spatial_resolution,
+                       float(self.sat_offset_max_var.get()) / spatial_resolution)
+        self._galaxy_centers = place_galaxies(n_gals, grid_size, init_grid_size, offset_gals)
+        if redraw:
+            self._draw_fov_preview_ref()
 
     def create_generator(self):
         """Instantiate a :class:`SONGS` object from current UI values.
@@ -1641,7 +1828,8 @@ class SONGSGUI(tk.Tk):
                     return
                 # Enable buttons on main thread
                 def _enable_all():
-                    for _b in (self.moments_btn, self.spectra_btn, self.slice_btn,
+                    self._has_results = True
+                    for _b in (self.analysis_btn, self.slice_btn,
                                self.save_btn, self.new_instance_btn):
                         try: self._enable_btn(_b)
                         except Exception: pass
@@ -1664,6 +1852,15 @@ class SONGSGUI(tk.Tk):
         if self.generator is None:
             return
 
+        # Disable theme button and result buttons while generating
+        self._disable_theme_btn()
+        for _b in (self.analysis_btn, self.slice_btn, self.save_btn, self.new_instance_btn):
+            try: self._disable_btn(_b)
+            except Exception: pass
+
+        # Stamp the pre-sampled positions onto the generator right before launch,
+        # so they reflect the current UI state and are not overwritten by traces.
+        self.generator._preset_centers = self._galaxy_centers
         t = threading.Thread(target=self._run_generate, daemon=True)
         t.start()
 
@@ -1714,6 +1911,7 @@ class SONGSGUI(tk.Tk):
             if self.generator is None:
                 return
 
+        self.generator._preset_centers = self._galaxy_centers
         t = threading.Thread(target=self._save_sim_thread, daemon=True)
         t.start()
 
@@ -1889,8 +2087,16 @@ class SONGSGUI(tk.Tk):
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(prog='songs.gui', description='SONGS spectral cube simulator GUI')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--dark',  action='store_true', help='Launch in dark mode (default)')
+    group.add_argument('--light', action='store_true', help='Launch in light mode')
+    args = parser.parse_args()
+    theme = 'light' if args.light else 'dark'
+
     _enable_hidpi_macos()   # must run before Tk() is instantiated
-    app = SONGSGUI()
+    app = SONGSGUI(theme=theme)
     try:
         app.mainloop()
     except KeyboardInterrupt:

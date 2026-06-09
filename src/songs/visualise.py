@@ -222,6 +222,7 @@ def moment1(data, idx, save=False, fname_save=None):
     numerator = (mask * moment_cube).sum(axis=0)
     denominator = (mask * cube).sum(axis=0)
     ratio = np.divide(numerator, denominator, out=np.full_like(numerator, np.nan), where=denominator != 0)
+    ratio = np.clip(ratio, float(vels.min()), float(vels.max()))
     vmax = np.max([np.abs(np.nanmin(ratio)), np.abs(np.nanmax(ratio))])
 
     fig, ax = plt.subplots(figsize=(5,5))
@@ -448,7 +449,7 @@ class SliceViewer(tk.Toplevel):
                          orient=tk.HORIZONTAL, command=cmd,
                          bg=_accent, fg=_fg_on_acc, troughcolor=_card_bg,
                          activebackground=_accent_hov, highlightthickness=0,
-                         sliderrelief=tk.FLAT, bd=0, width=6,
+                         sliderrelief=tk.FLAT, bd=0, width=14,
                          length=length, showvalue=show)
             s.pack(fill='x', expand=True)
             s.set(default)
@@ -488,8 +489,18 @@ class SliceViewer(tk.Toplevel):
                 try: self._thresh_var.set(float(v))
                 except Exception: pass
                 self._draw()
-            _tw, _ts = _scale(sb, 0.1, 50.0, 5.0, 120, _thresh_cmd, show=True)
-            _tw.pack(fill=tk.X)
+            thresh_wrap_sv = tk.Frame(sb, bg=_sl_border, padx=1, pady=1)
+            thresh_inner_sv = tk.Frame(thresh_wrap_sv, bg=_card_bg)
+            thresh_inner_sv.pack(fill='both', expand=True)
+            thresh_sl_sv = tk.Scale(thresh_inner_sv, from_=0.1, to=50.0, resolution=0.1,
+                                    orient=tk.HORIZONTAL, command=_thresh_cmd,
+                                    bg=_card_bg, fg=_accent, troughcolor=_card_bg,
+                                    activebackground=_accent_hov, highlightthickness=0,
+                                    sliderrelief=tk.FLAT, bd=0, width=14, length=120,
+                                    showvalue=True)
+            thresh_sl_sv.set(5.0)
+            thresh_sl_sv.pack(fill='x', expand=True)
+            thresh_wrap_sv.pack(fill=tk.X)
         else:
             self._thresh_var = tk.DoubleVar(value=5.0)
 
@@ -541,35 +552,37 @@ class SliceViewer(tk.Toplevel):
                                 font=("Helvetica", 8, "italic"), anchor="w")
         self._ch_lbl.pack(fill=tk.X, padx=12, pady=(4, 2))
 
-        # ── vmin / vmax sliders ───────────────────────────────────────────────
+        # ── vmin / vmax / channel — all three in one grid frame ───────────────
+        # Shared constants so every row has identical label font, width, indent.
+        _LBL_FONT  = ("Helvetica", 8)
+        _LBL_W     = 7      # characters — same for all three labels
+        _LBL_PAD   = (0, 6) # right-pad between label and slider
+
         vf = tk.Frame(self, bg=_bg)
-        vf.pack(fill=tk.X, padx=10, pady=(2, 2))
+        vf.pack(fill=tk.X, padx=10, pady=(2, 8))
         vf.columnconfigure(1, weight=1)
 
-        def _make_slider(parent, label, default, row):
+        def _make_slider(parent, label, default, row, from_=None, to_=None):
+            lo = self._data_min if from_ is None else from_
+            hi = self._data_max if to_   is None else to_
             tk.Label(parent, text=label, bg=_bg, fg=_step_lbl,
-                     font=("Helvetica", 7), width=5, anchor="e").grid(
-                         row=row, column=0, padx=(0, 4), pady=1)
-            wrap, s = _scale(parent, self._data_min, self._data_max, default,
+                     font=_LBL_FONT, width=_LBL_W, anchor="e").grid(
+                         row=row, column=0, padx=_LBL_PAD, pady=2)
+            wrap, s = _scale(parent, lo, hi, default,
                              VW - 160, lambda _v: self._draw())
-            wrap.grid(row=row, column=1, sticky="ew", pady=1)
+            wrap.grid(row=row, column=1, sticky="ew", pady=2)
             lbl = tk.Label(parent, text="", bg=_bg, fg=_accent,
-                           font=("Helvetica", 7), width=10, anchor="w")
-            lbl.grid(row=row, column=2, padx=(6, 0), pady=1)
+                           font=_LBL_FONT, width=10, anchor="w")
+            lbl.grid(row=row, column=2, padx=(6, 0), pady=2)
             return s, lbl
 
-        self._vmin_sl, self._vmin_lbl = _make_slider(vf, "vmin", self._data_min, 0)
-        self._vmax_sl, self._vmax_lbl = _make_slider(vf, "vmax", self._data_max, 1)
-
-        # ── Channel slider ────────────────────────────────────────────────────
-        sf = tk.Frame(self, bg=_bg)
-        sf.pack(fill=tk.X, padx=10, pady=(2, 8))
-        tk.Label(sf, text="Channel", bg=_bg, fg=_step_lbl,
-                 font=("Helvetica", 8), width=7, anchor="e").pack(side=tk.LEFT, padx=(0, 6))
-        _sw, self._slider = _scale(sf, 0, len(self._channels) - 1,
-                                   len(self._channels) // 2,
-                                   VW - 120, lambda _v: self._draw())
-        _sw.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._vmin_sl, self._vmin_lbl = _make_slider(vf, "vmin",    self._data_min, 0)
+        self._vmax_sl, self._vmax_lbl = _make_slider(vf, "vmax",    self._data_max, 1)
+        self._slider,  self._ch_idx_lbl = _make_slider(
+            vf, "Channel",
+            len(self._channels) // 2, 2,
+            from_=0, to_=len(self._channels) - 1,
+        )
 
         self._draw()
         self.update_idletasks()
@@ -577,7 +590,6 @@ class SliceViewer(tk.Toplevel):
         h = self.winfo_reqheight()
         self.geometry(f"{w}x{h}")
         self.minsize(w, h)
-        self.maxsize(w, 9999)
 
     # ── Normalization ─────────────────────────────────────────────────────────
     def _norm(self):
@@ -686,8 +698,9 @@ class SliceViewer(tk.Toplevel):
         # Update value labels
         self._vmin_lbl.configure(text=self._fmt_val(float(self._vmin_sl.get())))
         self._vmax_lbl.configure(text=self._fmt_val(float(self._vmax_sl.get())))
+        self._ch_idx_lbl.configure(text=f"{idx + 1}/{len(self._channels)}")
 
-        # Channel label
+        # Channel status label
         v = self._vels[ch] if ch < len(self._vels) else 0.0
         n_active = 0
         if self._per_gal is not None:
@@ -700,10 +713,326 @@ class SliceViewer(tk.Toplevel):
                 cube_max = float(np.nanmax(self._per_gal[i])) if np.nanmax(self._per_gal[i]) > 0 else 1e-9
                 if (self._per_gal[i, ch] >= thresh_frac * cube_max).any():
                     n_active += 1
-        parts = [f"Channel {ch}  ({idx+1}/{len(self._channels)})  ·  {v:.1f} km/s"]
+        parts = [f"Channel {ch}  ·  {v:.1f} km/s"]
         if n_active:
             parts.append(f"{n_active} source(s) visible")
         self._ch_lbl.configure(text="  ·  ".join(parts))
+
+
+class AnalysisViewer(tk.Toplevel):
+    """Combined analysis viewer: Moment 0, Moment 1, and integrated spectrum.
+
+    Source checkboxes (one per galaxy) and a Diffuse checkbox let the user
+    select which components contribute to all three panels. The layout mirrors
+    the nemo analysis viewer: two moment maps side-by-side on top, spectrum
+    spanning the full width below.
+    """
+
+    def __init__(self, master, data, idx: int = 0):
+        super().__init__(master)
+
+        _p          = _VIEWER_PALETTES[_VIEWER_THEME]
+        _bg         = _p['bg']
+        _card_bg    = _p['card_bg']
+        _accent     = _p['accent']
+        _accent_hov = _p['accent_hov']
+        _dim        = _p['dim']
+        _step_lbl   = _p['step_lbl']
+        _log_bg     = _p['log_bg']
+
+        self.configure(bg=_bg)
+        self.resizable(True, True)
+        self.title("SONGS — Analysis")
+        self._pal = _p
+
+        cube, meta = data[idx]
+        self._cube      = cube.astype(np.float32)
+        self._vels      = np.asarray(meta.get('average_vels', np.arange(cube.shape[0])))
+        self._beam      = meta.get('beam_info')
+        self._pix_scale = float(meta.get('pix_spatial_scale', 1.0))
+
+        pg = meta.get('per_galaxy_cubes')
+        self._per_gal = np.asarray(pg) if pg is not None else None
+        self._n_gals  = int(self._per_gal.shape[0]) if self._per_gal is not None else 0
+
+        hc = meta.get('halo_cube')
+        bc = meta.get('bridges_cube')
+        self._halo_cube    = np.asarray(hc).astype(np.float32) if hc is not None else None
+        self._bridges_cube = np.asarray(bc).astype(np.float32) if bc is not None else None
+        # Fallback: treat total minus per-galaxy as diffuse when component cubes absent
+        self._diffuse_cube = (
+            self._cube - self._per_gal.sum(axis=0)
+            if (self._per_gal is not None and self._n_gals > 0
+                and self._halo_cube is None and self._bridges_cube is None)
+            else None
+        )
+
+        # ── Layout: sidebar left, figure right ────────────────────────────────
+        top = tk.Frame(self, bg=_bg)
+        top.pack(fill=tk.BOTH, expand=True)
+
+        sb = tk.Frame(top, bg=_bg, width=148)
+        sb.pack(side=tk.LEFT, fill=tk.Y, padx=(6, 2), pady=6)
+        sb.pack_propagate(False)
+
+        tk.Label(sb, text="Sources", bg=_bg, fg=_accent,
+                 font=("Helvetica", 9, "bold")).pack(pady=(4, 6), anchor="w")
+
+        # Total spectrum checkbox
+        self._show_total = tk.BooleanVar(value=True)
+        tot_row = tk.Frame(sb, bg=_bg)
+        tot_row.pack(fill=tk.X, pady=1, anchor="w")
+        tk.Label(tot_row, text="—", bg=_bg, fg=_accent,
+                 font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=(0, 2))
+        tk.Checkbutton(tot_row, text="Total", variable=self._show_total,
+                       command=self._draw,
+                       bg=_bg, fg=_step_lbl, selectcolor=_accent,
+                       activebackground=_bg, activeforeground=_accent_hov,
+                       font=("Helvetica", 8), relief=tk.FLAT,
+                       anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Frame(sb, bg=_accent, height=1).pack(fill=tk.X, pady=(3, 5))
+
+        self._src_visible: dict[int, tk.BooleanVar] = {}
+        for i in range(self._n_gals):
+            col     = _SRC_PALETTE[i % len(_SRC_PALETTE)]
+            hex_col = _rgb_to_hex(col)
+            var     = tk.BooleanVar(value=True)
+            self._src_visible[i] = var
+            row = tk.Frame(sb, bg=_bg)
+            row.pack(fill=tk.X, pady=1, anchor="w")
+            tk.Label(row, text="■", bg=_bg, fg=hex_col,
+                     font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=(0, 2))
+            tk.Checkbutton(row, text=_src_label(i), variable=var,
+                           command=self._draw,
+                           bg=_bg, fg=_step_lbl, selectcolor=_accent,
+                           activebackground=_bg, activeforeground=_accent_hov,
+                           font=("Helvetica", 8), relief=tk.FLAT,
+                           anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # Diffuse component checkboxes
+        self._show_halo    = tk.BooleanVar(value=True)
+        self._show_bridges = tk.BooleanVar(value=True)
+        self._show_diffuse = tk.BooleanVar(value=True)  # fallback legacy
+
+        _has_components = (self._halo_cube is not None or self._bridges_cube is not None
+                           or self._diffuse_cube is not None)
+        if _has_components:
+            tk.Frame(sb, bg=_dim, height=1).pack(fill=tk.X, pady=(10, 5))
+
+            def _diff_cb(text, var, icon="▒"):
+                row = tk.Frame(sb, bg=_bg)
+                row.pack(fill=tk.X, pady=1, anchor="w")
+                tk.Label(row, text=icon, bg=_bg, fg=_step_lbl,
+                         font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=(0, 2))
+                tk.Checkbutton(row, text=text, variable=var, command=self._draw,
+                               bg=_bg, fg=_step_lbl, selectcolor=_accent,
+                               activebackground=_bg, activeforeground=_accent_hov,
+                               font=("Helvetica", 8), relief=tk.FLAT,
+                               anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            if self._halo_cube is not None:
+                _diff_cb("Diffuse Halo", self._show_halo, "◉")
+            if self._bridges_cube is not None:
+                _diff_cb("Bridges", self._show_bridges, "▒")
+            if self._diffuse_cube is not None:
+                _diff_cb("Diffuse", self._show_diffuse, "▒")
+
+        # ── Threshold slider ──────────────────────────────────────────────────
+        tk.Frame(sb, bg=_dim, height=1).pack(fill=tk.X, pady=(10, 5))
+        tk.Label(sb, text="Moment mask", bg=_bg, fg=_accent,
+                 font=("Helvetica", 8, "bold")).pack(anchor="w", pady=(0, 2))
+        tk.Label(sb, text="Threshold % of peak flux.\nPixels below are masked\nin Moment 1.",
+                 bg=_bg, fg=_step_lbl, font=("Helvetica", 7),
+                 justify="left").pack(anchor="w", pady=(0, 4))
+
+        self._thresh_var = tk.DoubleVar(value=5.0)
+        _sl_border = _p['slider_border']
+        _fg_on_acc = _p['fg_on_accent']
+
+        thresh_wrap = tk.Frame(sb, bg=_sl_border, padx=1, pady=1)
+        thresh_wrap.pack(fill=tk.X, pady=(0, 4))
+        thresh_inner = tk.Frame(thresh_wrap, bg=_card_bg)
+        thresh_inner.pack(fill='both', expand=True)
+        self._thresh_sl = tk.Scale(
+            thresh_inner, from_=0.1, to=50.0, resolution=0.1,
+            orient=tk.HORIZONTAL, variable=self._thresh_var,
+            command=lambda _v: self._draw(),
+            bg=_card_bg, fg=_accent, troughcolor=_card_bg,
+            activebackground=_accent_hov, highlightthickness=0,
+            sliderrelief=tk.FLAT, bd=0, width=14, showvalue=True,
+        )
+        self._thresh_sl.pack(fill='x', expand=True)
+
+        # ── Matplotlib figure ─────────────────────────────────────────────────
+        self._fig = plt.Figure(figsize=(9, 7), dpi=96, facecolor=_log_bg)
+        self._canvas = FigureCanvasTkAgg(self._fig, master=top)
+        self._canvas.get_tk_widget().pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self._draw()
+        self.update_idletasks()
+        self.resizable(True, True)
+        self.geometry("810x760")
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _build_display_cube(self) -> np.ndarray:
+        """Sum selected per-galaxy cubes plus selected diffuse components."""
+        if self._per_gal is None:
+            return self._cube
+        display = np.zeros_like(self._cube)
+        for i, var in self._src_visible.items():
+            if var.get():
+                display = display + self._per_gal[i]
+        if self._show_halo.get() and self._halo_cube is not None:
+            display = display + self._halo_cube
+        if self._show_bridges.get() and self._bridges_cube is not None:
+            display = display + self._bridges_cube
+        if self._show_diffuse.get() and self._diffuse_cube is not None:
+            display = display + self._diffuse_cube
+        return display
+
+    def _draw(self):
+        _pal      = self._pal
+        _bg       = _pal['log_bg']
+        _accent   = _pal['accent']
+        _step_lbl = _pal['step_lbl']
+        _dim      = _pal['dim']
+
+        _white = '#ffffff'
+
+        self._fig.clf()
+
+        # Grid: thin colorbar row on top, moment maps, spectrum
+        gs = self._fig.add_gridspec(
+            3, 2,
+            height_ratios=[0.05, 1.1, 0.9],
+            hspace=0.18, wspace=0.12,
+            left=0.13, right=0.97, top=0.96, bottom=0.10,
+        )
+        cax0  = self._fig.add_subplot(gs[0, 0])
+        cax1  = self._fig.add_subplot(gs[0, 1])
+        ax_m0 = self._fig.add_subplot(gs[1, 0])
+        ax_m1 = self._fig.add_subplot(gs[1, 1])
+        ax_sp = self._fig.add_subplot(gs[2, :])
+
+        cube = self._build_display_cube()
+        vels = self._vels
+        del_V = float(np.diff(vels).mean()) if len(vels) > 1 else 1.0
+
+        ny, nx = cube.shape[1], cube.shape[2]
+        extent = [0, nx, 0, ny]
+        scalebar_px = (25 / 72) * nx
+        sb_x0, sb_y0 = nx * 0.6, ny * 0.07
+
+        def _style_ax(ax):
+            ax.set_facecolor(_bg)
+            ax.set_xticks([]); ax.set_yticks([])
+            for sp in ax.spines.values():
+                sp.set_edgecolor(_dim); sp.set_linewidth(0.6)
+
+        def _scalebar(ax):
+            ax.plot([sb_x0, sb_x0 + scalebar_px], [sb_y0, sb_y0],
+                    color=_white, lw=1.5)
+            ax.text(sb_x0 + scalebar_px / 2, sb_y0 + ny * 0.03,
+                    f"{scalebar_px * self._pix_scale:.1f} kpc",
+                    color=_white, ha='center', va='bottom',
+                    fontsize=8, weight='bold')
+
+        def _beam(ax):
+            if self._beam is not None:
+                try:
+                    add_beam(ax, self._beam[0], self._beam[1], self._beam[2],
+                             xy_offset=(6 * ny / 72, 6 * ny / 72), color=_white)
+                except Exception:
+                    pass
+
+        def _inner_title(ax, text):
+            ax.text(0.03, 0.97, text, transform=ax.transAxes,
+                    color=_white, fontsize=10, fontweight='bold',
+                    va='top', ha='left',
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor=_bg,
+                              edgecolor=_dim, alpha=0.75, linewidth=0.6))
+
+        # ── Moment 0 ──────────────────────────────────────────────────────────
+        mom0 = cube.sum(axis=0) * del_V
+        vmax0 = float(np.nanmax(mom0)) if np.nanmax(mom0) > 0 else 1.0
+        _style_ax(ax_m0)
+        im0 = ax_m0.imshow(mom0, cmap='inferno', origin='lower',
+                           extent=extent, vmin=0, vmax=vmax0)
+        _inner_title(ax_m0, "Moment 0")
+        cb0 = self._fig.colorbar(im0, cax=cax0, orientation='horizontal')
+        cb0.ax.tick_params(colors=_white, labelsize=7)
+        cb0.outline.set_edgecolor(_dim)
+        cb0.set_label(r'Jy beam$^{-1}$ km s$^{-1}$', color=_white, fontsize=8)
+        cax0.xaxis.set_ticks_position('top')
+        cax0.xaxis.set_label_position('top')
+        _beam(ax_m0); _scalebar(ax_m0)
+
+        # ── Moment 1 — masked by threshold % of peak moment-0 flux ───────────
+        thresh_frac = float(self._thresh_var.get()) / 100.0
+        flux_mask = mom0 >= thresh_frac * vmax0
+
+        moment_cube = cube * vels[:, np.newaxis, np.newaxis]
+        denom = cube.sum(axis=0)
+        with np.errstate(invalid='ignore', divide='ignore'):
+            mom1_raw = np.where(denom > 0, moment_cube.sum(axis=0) / denom, np.nan)
+        mom1_raw = np.clip(mom1_raw, float(vels.min()), float(vels.max()))
+        mom1 = np.where(flux_mask, mom1_raw, np.nan)
+
+        finite = mom1[np.isfinite(mom1)]
+        vm1 = max(float(np.nanmax(np.abs(finite))) if finite.size > 0 else 1.0, 1.0)
+
+        _style_ax(ax_m1)
+        im1 = ax_m1.imshow(mom1, cmap='RdBu_r', origin='lower',
+                           extent=extent, vmin=-vm1, vmax=vm1)
+        _inner_title(ax_m1, "Moment 1")
+        cb1 = self._fig.colorbar(im1, cax=cax1, orientation='horizontal')
+        cb1.ax.tick_params(colors=_white, labelsize=7)
+        cb1.outline.set_edgecolor(_dim)
+        cb1.set_label(r'km s$^{-1}$', color=_white, fontsize=8)
+        cax1.xaxis.set_ticks_position('top')
+        cax1.xaxis.set_label_position('top')
+        _beam(ax_m1); _scalebar(ax_m1)
+
+        # ── Spectrum ──────────────────────────────────────────────────────────
+        ax_sp.set_facecolor(_bg)
+        for sp in ax_sp.spines.values():
+            sp.set_edgecolor(_dim); sp.set_linewidth(0.6)
+
+        if self._show_total.get():
+            ax_sp.plot(vels, cube.sum(axis=(1, 2)),
+                       color=_accent, lw=1.8, label="Total", zorder=3)
+
+        if self._per_gal is not None:
+            for i, var in self._src_visible.items():
+                if not var.get():
+                    continue
+                col = _SRC_PALETTE[i % len(_SRC_PALETTE)]
+                ax_sp.plot(vels, self._per_gal[i].sum(axis=(1, 2)),
+                           color=col, lw=0.9, alpha=0.75,
+                           label=_src_label(i), zorder=2)
+
+        if self._show_halo.get() and self._halo_cube is not None:
+            ax_sp.plot(vels, self._halo_cube.sum(axis=(1, 2)),
+                       color=_step_lbl, lw=0.9, alpha=0.55,
+                       linestyle=':', label="Diffuse Halo", zorder=2)
+        if self._show_bridges.get() and self._bridges_cube is not None:
+            ax_sp.plot(vels, self._bridges_cube.sum(axis=(1, 2)),
+                       color=_dim, lw=0.9, alpha=0.65,
+                       linestyle='--', label="Bridges", zorder=2)
+        if self._show_diffuse.get() and self._diffuse_cube is not None:
+            ax_sp.plot(vels, self._diffuse_cube.sum(axis=(1, 2)),
+                       color=_step_lbl, lw=0.9, alpha=0.6,
+                       linestyle='--', label="Diffuse", zorder=2)
+
+        ax_sp.set_xlabel("Velocity (km/s)", color=_white, fontsize=10)
+        ax_sp.set_ylabel("Flux Density (Jy/beam)", color=_white, fontsize=10)
+        ax_sp.tick_params(colors=_white, labelsize=9)
+        leg = ax_sp.legend(fontsize=9, facecolor=_pal['card_bg'],
+                           edgecolor=_dim, labelcolor=_white)
+
+        self._fig.set_facecolor(_pal['log_bg'])
+        self._canvas.draw()
 
 
 def slice_view(data, idx=0, channel=None, cmap='viridis', parent=None):
