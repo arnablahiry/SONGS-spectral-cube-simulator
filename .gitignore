@@ -1,3 +1,10 @@
 *.npy
 *.firs
 *.h5
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.DS_Store
