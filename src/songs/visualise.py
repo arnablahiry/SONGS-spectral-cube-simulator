@@ -335,20 +335,56 @@ _LOG_BG       = "#0a0a0a"   # matplotlib figure background
 _STEP_LBL     = "#999999"   # secondary label text
 
 # Current viewer theme — toggled by the GUI's theme button
-_VIEWER_THEME = 'dark'
+_VIEWER_THEME = 'light'
 
+# Palette mirrors the main GUI's _THEMES exactly so the viewer's sliders,
+# pills, and accents match the main cards 1:1.
 _VIEWER_PALETTES = {
     'dark': dict(
-        bg=_BG, card_bg=_CARD_BG, accent=_ACCENT, accent_hov=_ACCENT_HOV,
-        dim=_DIM, dim_txt=_DIM_TXT, log_bg=_LOG_BG, step_lbl=_STEP_LBL,
-        slider_border='#2e2000', fg_on_accent=_BG,
+        bg='#0a0a0a', card_bg='#111111', accent='#d4aa40', accent_hov='#f0c040',
+        dim='#5e4200', dim_txt='#3a3010', log_bg='#0a0a0a', step_lbl='#999999',
+        slider_border='#5e4200', fg_on_accent='#000000', entry_bg='#1a1a1a',
+        trough='#111111', pill_nor='#1e1e1e', pill_hov='#2e2700',
+        sym_fg='white', sm_border='#201800',
     ),
     'light': dict(
-        bg='#f0ede6', card_bg='#ffffff', accent='#9a7200', accent_hov='#c8a000',
-        dim='#c8a030', dim_txt='#9a8050', log_bg='#ffffff', step_lbl='#555555',
-        slider_border='#c8a030', fg_on_accent='#000000',
+        bg='#f0ede6', card_bg='#ffffff', accent='#9a7200', accent_hov='#e8c040',
+        dim='#c8a030', dim_txt='#9a8050', log_bg='#ffffff', step_lbl='#444444',
+        slider_border='#c8a030', fg_on_accent='#ffffff', entry_bg='#ffffff',
+        trough='#ffffff', pill_nor='#dedad0', pill_hov='#f5e898',
+        sym_fg='#222222', sm_border='#e0d5b0',
     ),
 }
+
+def _apply_window_appearance(win, theme=None):
+    """Force a window's macOS title bar to match the app theme.
+
+    Mirrors SONGSGUI._set_window_appearance so Toplevel viewers get the same
+    themed title bar as the main window instead of following the system
+    light/dark setting. No-op off macOS or without PyObjC.
+    """
+    try:
+        import AppKit
+        # Deliberately NO update_idletasks() here: forcing idle processing
+        # realises and MAPS the window, which made blank placeholder windows
+        # flash on screen before they were ready (the log window is created
+        # then immediately withdrawn; the main window is themed before its
+        # cards are built). If the NSWindow doesn't exist yet we simply do
+        # nothing — every caller also schedules a delayed retry, by which
+        # point the mainloop has realised the window on its own.
+        title = str(win.title())
+        nswin = next((w for w in AppKit.NSApplication.sharedApplication().windows()
+                      if str(w.title()) == title), None)
+        if nswin is None:
+            return
+        theme = theme or _VIEWER_THEME
+        name = (AppKit.NSAppearanceNameAqua if theme == 'light'
+                else AppKit.NSAppearanceNameDarkAqua)
+        nswin.setAppearance_(AppKit.NSAppearance.appearanceNamed_(name))
+    except Exception:
+        # Non-macOS / PyObjC unavailable — leave the title bar as-is.
+        pass
+
 
 _CMAPS = ["inferno", "viridis", "magma", "plasma", "cividis",
           "gray", "hot", "afmhot", "YlOrRd", "cubehelix"]
@@ -379,6 +415,264 @@ def _lighten(rgb, amount=0.3):
     return tuple(min(c + amount, 1.0) for c in rgb)
 
 
+def _main_slider(parent, label, var, from_, to, pal,
+                 resolution=0.01, fmt="{:.2f}", integer=False):
+    """Replica of SONGSGUI.make_slider so viewer sliders match the main cards
+    exactly (soft-accent border, label above, editable value entry, snapping)."""
+    bg          = pal['card_bg']
+    fg          = pal['step_lbl']
+    acc         = pal['accent']
+    trough      = pal['trough']
+    _entry_bg   = pal['entry_bg']
+    _border_col = pal['slider_border']
+    _thumb      = pal['accent']
+    _thumbh     = pal['accent_hov']
+
+    _wrap = tk.Frame(parent, bg=_border_col, padx=1, pady=1)
+    fr = tk.Frame(_wrap, bg=bg)
+    fr.pack(fill='both', expand=True)
+    if label:
+        tk.Label(fr, text=label, bg=bg, fg=fg,
+                 font=("Helvetica", 8)).pack(anchor='w', pady=(0, 2))
+    slider_row = tk.Frame(fr, bg=bg)
+    slider_row.pack(fill='x')
+
+    entry_var = tk.StringVar(value=fmt.format(var.get()) if not integer
+                             else str(int(var.get())))
+    entry = tk.Entry(slider_row, textvariable=entry_var, width=6, justify='right',
+                     bg=_entry_bg, fg=acc, insertbackground=acc,
+                     relief='flat', highlightthickness=1,
+                     highlightbackground=_border_col, highlightcolor=acc,
+                     font=("Helvetica", 8), bd=2)
+    entry.pack(side='right', padx=(4, 0))
+
+    scale = tk.Scale(slider_row, from_=from_, to=to, orient='horizontal',
+                     resolution=resolution, bg=_thumb, fg=fg, troughcolor=trough,
+                     activebackground=_thumbh, highlightthickness=0,
+                     sliderrelief='flat', bd=0, showvalue=False, relief='flat', width=6)
+    scale.pack(side='left', fill='x', expand=True)
+    step = resolution if resolution else 0.01
+    busy = {'val': False}
+
+    def snap(v):
+        if integer:
+            return int(round(float(v)))
+        nsteps = round((float(v) - from_) / step)
+        return from_ + nsteps * step
+
+    def _fmt(v):
+        try:    return fmt.format(v)
+        except Exception: return str(v)
+
+    def update(v):
+        if busy['val']:
+            return
+        busy['val'] = True
+        v_snap = snap(v)
+        try: var.set(v_snap)
+        except Exception: pass
+        entry_var.set(_fmt(v_snap))
+        try: scale.set(v_snap)
+        except Exception: pass
+        busy['val'] = False
+
+    scale.configure(command=update)
+    try: scale.set(var.get())
+    except Exception: scale.set(from_)
+
+    def _commit_entry(*_):
+        if busy['val']:
+            return
+        try:
+            v = max(from_, min(to, snap(float(entry_var.get().strip()))))
+            busy['val'] = True
+            var.set(v); entry_var.set(_fmt(v)); scale.set(v)
+            busy['val'] = False
+        except (ValueError, tk.TclError):
+            pass
+
+    entry.bind('<Return>',   _commit_entry)
+    entry.bind('<FocusOut>', _commit_entry)
+
+    def _var_trace(*_):
+        if busy['val']:
+            return
+        busy['val'] = True
+        v = var.get()
+        entry_var.set(_fmt(v))
+        try: scale.set(v)
+        except Exception: pass
+        busy['val'] = False
+    try:
+        var.trace_add('write', _var_trace)
+    except Exception:
+        var.trace('w', _var_trace)
+    return _wrap
+
+
+# ---------------------------------------------------------------------------
+# Shared viewer widgets — used by both SliceViewer and AnalysisViewer so the
+# two windows render cards, symbol sliders, and source pills identically.
+# ---------------------------------------------------------------------------
+_PILL_H = 21
+
+
+def _find_scale(widget):
+    """Recursively find the first tk.Scale inside a widget tree — used to
+    reconfigure a slider's from_/to bounds after construction (e.g. when
+    the underlying data range changes, as with the Clean/Noisy toggle)."""
+    if isinstance(widget, tk.Scale):
+        return widget
+    for c in widget.winfo_children():
+        found = _find_scale(c)
+        if found is not None:
+            return found
+    return None
+
+
+def _viewer_slider(parent, master, pal, label, var, lo, hi,
+                   resolution=0.01, fmt="{:.2f}", integer=False):
+    """Prefer the real SONGSGUI.make_slider when the master is the app; else
+    fall back to the module-level replica so the slider matches the main cards."""
+    _gui_make = getattr(master, "make_slider", None)
+    if callable(_gui_make):
+        return _gui_make(parent, label, var, lo, hi,
+                         resolution=resolution, fmt=fmt, integer=integer)
+    return _main_slider(parent, label, var, lo, hi, pal,
+                        resolution=resolution, fmt=fmt, integer=integer)
+
+
+def _viewer_small_card(parent, pal, title=None):
+    """Replica of the main GUI's small_card (soft border + card body + heading)."""
+    outer = tk.Frame(parent, bg=pal['sm_border'], padx=1, pady=1)
+    outer.pack(fill='x', padx=8, pady=4)
+    inner = tk.Frame(outer, bg=pal['card_bg'], padx=5, pady=6)
+    inner.pack(fill='both', expand=True)
+    if title:
+        tk.Label(inner, text=title, bg=pal['card_bg'], fg=pal['step_lbl'],
+                 font=("Helvetica", 8), anchor='w',
+                 justify='left').pack(anchor='w', pady=(2, 5))
+    return inner
+
+
+def _viewer_sym_slider_row(parent, master, pal, segs, var, lo, hi,
+                           resolution=0.01, fmt="{:.2f}", integer=False):
+    """A rich_label symbol on the left + a SONGS-style slider on the right."""
+    try:
+        from .gui import rich_label as _rich
+    except Exception:
+        _rich = None
+    row = tk.Frame(parent, bg=pal['card_bg'])
+    row.pack(fill='x', pady=(0, 4))
+    if _rich is not None:
+        sym = _rich(row, segs, bg=pal['card_bg'], fg=pal['sym_fg'])
+    else:
+        sym = tk.Label(row, text="".join(t for t, _ in segs),
+                       bg=pal['card_bg'], fg=pal['sym_fg'],
+                       font=("Georgia", 10, "italic"))
+    sym.pack(side='left', padx=(0, 4))
+    _viewer_slider(row, master, pal, "", var, lo, hi, resolution=resolution,
+                   fmt=fmt, integer=integer).pack(side='left', fill='x', expand=True)
+    return row
+
+
+def _viewer_pill(parent, pal, label, var, on_toggle, *, swatch="■",
+                 swatch_color=None, pill_w=None, pill_font=None):
+    """Clickable pill (accent = active) with a coloured swatch to its left.
+
+    Mirrors the SliceViewer source pills: fixed-width canvas, pointing-hand
+    cursor, hover highlight, toggles ``var`` then calls ``on_toggle``. Returns
+    the pill's ``_redraw`` callable so external state changes can refresh it."""
+    from tkinter import font as _tkfont
+    _bg       = pal['bg']
+    _accent   = pal['accent']
+    _pill_nor = pal['pill_nor']
+    _pill_hov = pal['pill_hov']
+    _fg_on    = pal['fg_on_accent']
+    _step     = pal['step_lbl']
+    f = pill_font or _tkfont.Font(family="Helvetica", size=8, weight="bold")
+    w = pill_w or (f.measure(label) + 16)
+
+    prow = tk.Frame(parent, bg=_bg)
+    prow.pack(fill=tk.X, pady=2, anchor="w")
+    tk.Label(prow, text=swatch, bg=_bg, fg=swatch_color or _accent,
+             font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=(0, 3))
+    cv = tk.Canvas(prow, width=w, height=_PILL_H, highlightthickness=0,
+                   bd=0, bg=_bg, cursor="pointinghand")
+    cv.pack(side=tk.LEFT)
+
+    def _redraw(hover=False):
+        cv.delete("all")
+        active  = var.get()
+        fill    = _accent if active else (_pill_hov if hover else _pill_nor)
+        txt_col = _fg_on if active else _step
+        cv.create_rectangle(0, 0, w, _PILL_H, fill=fill, outline=fill)
+        cv.create_text(w // 2, _PILL_H // 2, text=label, fill=txt_col, font=f)
+
+    def _toggle(_e=None):
+        var.set(not var.get())
+        _redraw()
+        on_toggle()
+
+    cv.bind("<ButtonRelease-1>", _toggle)
+    cv.bind("<Enter>", lambda _e: _redraw(hover=True) if not var.get() else None)
+    cv.bind("<Leave>", lambda _e: _redraw())
+    _redraw()
+    return _redraw
+
+
+def _viewer_pill_group(parent, pal, values, var, on_select, *, pill_w=None,
+                       pill_font=None, bg=None):
+    """Mutually-exclusive row of pills (accent = active), one per entry in
+    ``values``. ``var`` is a ``tk.StringVar``; clicking a pill sets it and
+    calls ``on_select()``. Generalizes the inline norm-mode pill pattern
+    (SliceViewer) so it can be reused for e.g. a Clean/Noisy toggle in both
+    SliceViewer and AnalysisViewer."""
+    from tkinter import font as _tkfont
+    _accent   = pal['accent']
+    _pill_nor = pal['pill_nor']
+    _pill_hov = pal['pill_hov']
+    _fg_on    = pal['fg_on_accent']
+    _step     = pal['step_lbl']
+    _bg       = bg if bg is not None else pal['card_bg']
+    f = pill_font or _tkfont.Font(family="Helvetica", size=8, weight="bold")
+    w = pill_w or (max(f.measure(v) for v in values) + 16)
+    redraws: list = []
+
+    def _make_pill(value):
+        # Nested function call (not a bare for-loop body) so each pill gets
+        # its own closure scope — a for-loop body would rebind `_redraw`/
+        # `_select` in the *shared* enclosing scope each iteration, leaving
+        # every <Enter>/<Leave> handler pointing at the last pill only.
+        cv = tk.Canvas(parent, width=w, height=_PILL_H, highlightthickness=0,
+                       bd=0, bg=_bg, cursor="pointinghand")
+        cv.pack(side=tk.LEFT, padx=2)
+
+        def _redraw(hover=False):
+            cv.delete("all")
+            active  = var.get() == value
+            fill    = _accent if active else (_pill_hov if hover else _pill_nor)
+            txt_col = _fg_on if active else _step
+            cv.create_rectangle(0, 0, w, _PILL_H, fill=fill, outline=fill)
+            cv.create_text(w // 2, _PILL_H // 2, text=value, fill=txt_col, font=f)
+
+        def _select(_e=None):
+            var.set(value)
+            for r in redraws:
+                r()
+            on_select()
+
+        cv.bind("<ButtonRelease-1>", _select)
+        cv.bind("<Enter>", lambda _e: _redraw(hover=True) if var.get() != value else None)
+        cv.bind("<Leave>", lambda _e: _redraw())
+        redraws.append(_redraw)
+        _redraw()
+
+    for value in values:
+        _make_pill(value)
+    return redraws
+
+
 class SliceViewer(tk.Toplevel):
     """Channel-by-channel IFU slice viewer matching nemo aesthetics.
 
@@ -388,7 +682,7 @@ class SliceViewer(tk.Toplevel):
     masks whose threshold percentage is tunable via a dedicated slider.
     """
 
-    def __init__(self, master, data, idx: int = 0):
+    def __init__(self, master, data, idx: int = 0, noisy_data=None):
         super().__init__(master)
 
         # Resolve palette from current viewer theme
@@ -401,16 +695,30 @@ class SliceViewer(tk.Toplevel):
         _dim_txt    = _p['dim_txt']
         _log_bg     = _p['log_bg']
         _step_lbl   = _p['step_lbl']
-        _sl_border  = _p['slider_border']
-        _fg_on_acc  = _p['fg_on_accent']
 
         self.configure(bg=_bg)
         self.resizable(True, True)
         self.title("SONGS — IFU Slice Viewer")
+        # Themed title bar, matching the main window. Re-applied on a short
+        # delay too, since the NSWindow may not exist yet on the first call.
+        _apply_window_appearance(self)
+        self.after(250, lambda: _apply_window_appearance(self))
 
         # ── Unpack data ──────────────────────────────────────────────────────
+        # ``noisy_data`` (same shape/idx convention as ``data``) is optional —
+        # only present when "Use Noise?" is Yes. Both versions of the TOTAL
+        # cube are kept; per-source component arrays (per_galaxy_cubes) stay
+        # the clean ground truth in both cases, since noise is an instrument
+        # effect on the observed total, not a per-source quantity.
         cube, meta = data[idx]
-        self._cube        = cube.astype(np.float32)
+        self._cube_clean  = cube.astype(np.float32)
+        self._cube_noisy  = None
+        if noisy_data:
+            noisy_cube, _noisy_meta = noisy_data[idx]
+            self._cube_noisy = noisy_cube.astype(np.float32)
+        # Default to noisy when available — matches what would actually be
+        # observed/saved.
+        self._cube         = self._cube_noisy if self._cube_noisy is not None else self._cube_clean
         self._vels        = np.asarray(meta.get("average_vels", np.arange(cube.shape[0])))
         self._beam        = meta.get("beam_info")
         self._pix_scale   = float(meta.get("pix_spatial_scale", 1.0))
@@ -420,43 +728,49 @@ class SliceViewer(tk.Toplevel):
 
         n_ch, ny, nx = self._cube.shape
         self._channels = list(range(n_ch))
-        VW = 500
+        VW = 560
 
         flat             = self._cube.ravel()
         self._data_min   = float(np.nanmin(flat))
         self._data_max   = float(np.nanmax(flat))
 
-        # ── Matplotlib figure ────────────────────────────────────────────────
-        self._fig   = plt.Figure(figsize=(VW/96, VW/96), dpi=96, facecolor=_log_bg)
-        self._ax    = self._fig.add_axes([0.01, 0.01, 0.82, 0.98])
-        self._ax_cb = self._fig.add_axes([0.86, 0.01, 0.06, 0.98])
+        # ── Matplotlib figure (colorbar via axes_locatable, like NEMO) ────────
+        # Extra width (+100, was +60) and a narrower main-axes fraction
+        # (0.86, was 0.90) give the vertical colorbar's rotated unit label
+        # enough room that it doesn't get clipped at the figure's right edge.
+        self._fig   = plt.Figure(figsize=((VW+100)/96, VW/96), dpi=96, facecolor=_log_bg)
+        self._ax    = self._fig.add_axes([0.02, 0.02, 0.86, 0.96])
+        self._ax.set_xticks([]); self._ax.set_yticks([])
         for spine in self._ax.spines.values():
             spine.set_edgecolor(_dim_txt)
             spine.set_linewidth(0.8)
-        self._ax.set_xticks([]); self._ax.set_yticks([])
+        _div        = make_axes_locatable(self._ax)
+        self._ax_cb = _div.append_axes("right", size="4%", pad=0.1)
         self._ax_cb.set_facecolor(_log_bg)
 
         # ── Layout: sidebar + canvas ─────────────────────────────────────────
         top = tk.Frame(self, bg=_bg)
         top.pack(fill=tk.BOTH, expand=True)
 
-        def _scale(parent, from_, to_, default, length, cmd, show=False):
-            wrap = tk.Frame(parent, bg=_sl_border, padx=1, pady=1)
-            inner = tk.Frame(wrap, bg=_card_bg)
-            inner.pack(fill='both', expand=True)
-            s = tk.Scale(inner, from_=from_, to=to_,
-                         resolution=(to_ - from_) / 500 if to_ != from_ else 0.01,
-                         orient=tk.HORIZONTAL, command=cmd,
-                         bg=_accent, fg=_fg_on_acc, troughcolor=_card_bg,
-                         activebackground=_accent_hov, highlightthickness=0,
-                         sliderrelief=tk.FLAT, bd=0, width=14,
-                         length=length, showvalue=show)
-            s.pack(fill='x', expand=True)
-            s.set(default)
-            return wrap, s
+        # Store palette for use in _draw and helpers
+        self._pal = _p
 
-        # Sources sidebar (only when per-galaxy cubes exist)
+        # Slider factory — delegates to the shared helper so the viewer's
+        # sliders match the main GUI's cards exactly.
+        from tkinter import font as _tkfont
+        def _slider(parent, label, var, lo, hi, resolution=0.01,
+                    fmt="{:.2f}", integer=False):
+            return _viewer_slider(parent, self.master, _p, label, var, lo, hi,
+                                  resolution=resolution, fmt=fmt, integer=integer)
+
+        # Threshold var initialised before sidebar so left panel can reference it
+        self._thresh_var = tk.DoubleVar(value=5.0)
+        # Power-law exponent for the "power" normalization mode
+        self._gamma_var  = tk.DoubleVar(value=0.5)
+
+        # ── Sources sidebar: fixed-width clickable pills (accent = active) ────
         self._src_visible: dict[int, tk.BooleanVar] = {}
+        self._src_pill_redraw: list = []
         if self._per_gal is not None:
             sb = tk.Frame(top, bg=_bg, width=140)
             sb.pack(side=tk.LEFT, fill=tk.Y, padx=(6, 2), pady=4)
@@ -465,47 +779,22 @@ class SliceViewer(tk.Toplevel):
             tk.Label(sb, text="Sources", bg=_bg, fg=_accent,
                      font=("Helvetica", 9, "bold")).pack(pady=(4, 6), anchor="w")
 
-            for i in range(self._n_gals):
-                col     = _SRC_PALETTE[i % len(_SRC_PALETTE)]
-                hex_col = _rgb_to_hex(col)
-                var     = tk.BooleanVar(value=True)
-                self._src_visible[i] = var
-                row = tk.Frame(sb, bg=_bg)
-                row.pack(fill=tk.X, pady=1, anchor="w")
-                tk.Label(row, text="■", bg=_bg, fg=hex_col,
-                         font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=(0, 2))
-                tk.Checkbutton(row, text=_src_label(i), variable=var,
-                               command=self._draw,
-                               bg=_bg, fg=_step_lbl, selectcolor=_accent,
-                               activebackground=_bg, activeforeground=_accent_hov,
-                               font=("Helvetica", 8), relief=tk.FLAT,
-                               anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
+            _pill_font = _tkfont.Font(family="Helvetica", size=8, weight="bold")
+            # Fixed pill width sized to the longest label so all pills match
+            _all_labels = [_src_label(i) for i in range(self._n_gals)]
+            _PILL_W = max((_pill_font.measure(lbl) for lbl in _all_labels), default=80) + 16
 
-            tk.Frame(sb, bg=_dim, height=1).pack(fill=tk.X, pady=(8, 4))
-            tk.Label(sb, text="Threshold %", bg=_bg, fg=_step_lbl,
-                     font=("Helvetica", 7)).pack(anchor="w", pady=(2, 1))
-            self._thresh_var = tk.DoubleVar(value=5.0)
-            def _thresh_cmd(v):
-                try: self._thresh_var.set(float(v))
-                except Exception: pass
+            def _on_src_toggle():
                 self._draw()
-            thresh_wrap_sv = tk.Frame(sb, bg=_sl_border, padx=1, pady=1)
-            thresh_inner_sv = tk.Frame(thresh_wrap_sv, bg=_card_bg)
-            thresh_inner_sv.pack(fill='both', expand=True)
-            thresh_sl_sv = tk.Scale(thresh_inner_sv, from_=0.1, to=50.0, resolution=0.1,
-                                    orient=tk.HORIZONTAL, command=_thresh_cmd,
-                                    bg=_card_bg, fg=_accent, troughcolor=_card_bg,
-                                    activebackground=_accent_hov, highlightthickness=0,
-                                    sliderrelief=tk.FLAT, bd=0, width=14, length=120,
-                                    showvalue=True)
-            thresh_sl_sv.set(5.0)
-            thresh_sl_sv.pack(fill='x', expand=True)
-            thresh_wrap_sv.pack(fill=tk.X)
-        else:
-            self._thresh_var = tk.DoubleVar(value=5.0)
+                self._update_spectrum_data()
 
-        # Store palette for use in _draw
-        self._pal = _p
+            for i in range(self._n_gals):
+                hex_col = _rgb_to_hex(_SRC_PALETTE[i % len(_SRC_PALETTE)])
+                self._src_visible[i] = tk.BooleanVar(value=True)
+                _redraw = _viewer_pill(sb, _p, _src_label(i), self._src_visible[i],
+                                       _on_src_toggle, swatch="■", swatch_color=hex_col,
+                                       pill_w=_PILL_W, pill_font=_pill_font)
+                self._src_pill_redraw.append(_redraw)
 
         self._canvas = FigureCanvasTkAgg(self._fig, master=top)
         self._canvas.get_tk_widget().pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -516,6 +805,40 @@ class SliceViewer(tk.Toplevel):
         tk.Frame(ctrl, bg=_dim, height=1).pack(fill=tk.X)
         inner_ctrl = tk.Frame(ctrl, bg=_card_bg)
         inner_ctrl.pack(fill=tk.X, padx=10, pady=4)
+
+        # Clean/Noisy toggle — only shown when a noisy preview is available
+        # ("Use Noise?" was Yes at generation time). Swaps which TOTAL cube
+        # self._cube points to and refreshes both the channel image and the
+        # spectrum panel (whose curves are cached, not recomputed by _draw()).
+        if self._cube_noisy is not None:
+            tk.Label(inner_ctrl, text="View:", bg=_card_bg, fg=_step_lbl,
+                     font=("Helvetica", 8)).pack(side=tk.LEFT, padx=(0, 4))
+            self._view_mode = tk.StringVar(value="Noisy")
+
+            def _on_view_mode_change():
+                self._cube = (self._cube_noisy if self._view_mode.get() == "Noisy"
+                             else self._cube_clean)
+                # Re-derive the colour-scale range from whichever cube is
+                # now active — clean and noisy cubes have different peak/
+                # noise-floor values, so both the V_min/V_max sliders'
+                # bounds and their current values need to follow the
+                # switch, not stay pinned to the cube that was active at
+                # __init__ time.
+                flat = self._cube.ravel()
+                self._data_min = float(np.nanmin(flat))
+                self._data_max = float(np.nanmax(flat))
+                for scale in (self._vmin_scale, self._vmax_scale):
+                    if scale is not None:
+                        scale.configure(from_=self._data_min, to=self._data_max)
+                self._vmin_var.set(self._data_min)
+                self._vmax_var.set(self._data_max)
+                self._spec_total = np.nansum(self._cube, axis=(1, 2))
+                self._redraw_spectrum()
+                self._draw()
+
+            _viewer_pill_group(inner_ctrl, _p, ("Clean", "Noisy"), self._view_mode,
+                               _on_view_mode_change, bg=_card_bg)
+            tk.Frame(inner_ctrl, bg=_card_bg, width=8).pack(side=tk.LEFT)
 
         tk.Label(inner_ctrl, text="Colormap:", bg=_card_bg, fg=_step_lbl,
                  font=("Helvetica", 8)).pack(side=tk.LEFT, padx=(0, 3))
@@ -537,52 +860,263 @@ class SliceViewer(tk.Toplevel):
                        activebackground=_card_bg, activeforeground=_accent_hov,
                        font=("Helvetica", 8), relief=tk.FLAT).pack(side=tk.LEFT, padx=(0, 12))
 
+        # Normalization — single-select pills (NEMO-style), accent = active
         self._norm_mode = tk.StringVar(value="linear")
+        self._norm_pill_redraw: list = []
         tk.Label(inner_ctrl, text="Norm:", bg=_card_bg, fg=_step_lbl,
-                 font=("Helvetica", 8)).pack(side=tk.LEFT, padx=(0, 3))
-        for lbl in ("linear", "log", "power"):
-            tk.Radiobutton(inner_ctrl, text=lbl, variable=self._norm_mode, value=lbl,
-                           command=self._draw,
-                           bg=_card_bg, fg=_step_lbl, selectcolor=_accent,
-                           activebackground=_card_bg, activeforeground=_accent_hov,
-                           font=("Helvetica", 8), relief=tk.FLAT).pack(side=tk.LEFT, padx=2)
+                 font=("Helvetica", 8)).pack(side=tk.LEFT, padx=(0, 4))
 
-        # ── Channel label ─────────────────────────────────────────────────────
-        self._ch_lbl = tk.Label(self, text="", bg=_bg, fg=_accent,
-                                font=("Helvetica", 8, "italic"), anchor="w")
-        self._ch_lbl.pack(fill=tk.X, padx=12, pady=(4, 2))
+        _norm_font = _tkfont.Font(family="Helvetica", size=8, weight="bold")
+        _NP_W = max(_norm_font.measure(l) for l in ("linear", "log", "power")) + 16
 
-        # ── vmin / vmax / channel — all three in one grid frame ───────────────
-        # Shared constants so every row has identical label font, width, indent.
-        _LBL_FONT  = ("Helvetica", 8)
-        _LBL_W     = 7      # characters — same for all three labels
-        _LBL_PAD   = (0, 6) # right-pad between label and slider
+        def _make_norm_pill(value):
+            cv = tk.Canvas(inner_ctrl, width=_NP_W, height=_PILL_H,
+                           highlightthickness=0, bd=0, bg=_card_bg,
+                           cursor="pointinghand")
+            cv.pack(side=tk.LEFT, padx=2)
 
-        vf = tk.Frame(self, bg=_bg)
-        vf.pack(fill=tk.X, padx=10, pady=(2, 8))
-        vf.columnconfigure(1, weight=1)
+            def _redraw(hover=False):
+                cv.delete("all")
+                active  = self._norm_mode.get() == value
+                fill    = _accent if active else (_p['pill_hov'] if hover else _p['pill_nor'])
+                txt_col = _p['fg_on_accent'] if active else _step_lbl
+                cv.create_rectangle(0, 0, _NP_W, _PILL_H, fill=fill, outline=fill)
+                cv.create_text(_NP_W // 2, _PILL_H // 2, text=value,
+                               fill=txt_col, font=_norm_font)
 
-        def _make_slider(parent, label, default, row, from_=None, to_=None):
-            lo = self._data_min if from_ is None else from_
-            hi = self._data_max if to_   is None else to_
-            tk.Label(parent, text=label, bg=_bg, fg=_step_lbl,
-                     font=_LBL_FONT, width=_LBL_W, anchor="e").grid(
-                         row=row, column=0, padx=_LBL_PAD, pady=2)
-            wrap, s = _scale(parent, lo, hi, default,
-                             VW - 160, lambda _v: self._draw())
-            wrap.grid(row=row, column=1, sticky="ew", pady=2)
-            lbl = tk.Label(parent, text="", bg=_bg, fg=_accent,
-                           font=_LBL_FONT, width=10, anchor="w")
-            lbl.grid(row=row, column=2, padx=(6, 0), pady=2)
-            return s, lbl
+            def _select(_e=None):
+                self._norm_mode.set(value)
+                for r in self._norm_pill_redraw:
+                    r()
+                self._draw()
 
-        self._vmin_sl, self._vmin_lbl = _make_slider(vf, "vmin",    self._data_min, 0)
-        self._vmax_sl, self._vmax_lbl = _make_slider(vf, "vmax",    self._data_max, 1)
-        self._slider,  self._ch_idx_lbl = _make_slider(
-            vf, "Channel",
-            len(self._channels) // 2, 2,
-            from_=0, to_=len(self._channels) - 1,
-        )
+            cv.bind("<ButtonRelease-1>", _select)
+            cv.bind("<Enter>", lambda _e: _redraw(hover=True)
+                    if self._norm_mode.get() != value else None)
+            cv.bind("<Leave>", lambda _e: _redraw())
+            self._norm_pill_redraw.append(_redraw)
+            _redraw()
+
+        for _nm in ("linear", "log", "power"):
+            _make_norm_pill(_nm)
+
+        # Gamma (power-law exponent) — only meaningful in "power" mode, so
+        # it sits right next to the pills, styled exactly like every other
+        # slider in the app (same make_slider() output, no cramped box),
+        # and its opacity is reduced (blended toward the card background,
+        # not just state=disabled) whenever a different norm mode is active.
+        def _blend(c1, c2, t):
+            def _rgb(h):
+                h = h.lstrip('#')
+                return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+            r1, g1, b1 = _rgb(c1)
+            r2, g2, b2 = _rgb(c2)
+            return '#{:02x}{:02x}{:02x}'.format(
+                round(r1 + (r2 - r1) * t), round(g1 + (g2 - g1) * t), round(b1 + (b2 - b1) * t))
+
+        _gamma_lbl = tk.Label(inner_ctrl, text="γ:", bg=_card_bg, fg=_step_lbl,
+                              font=("Helvetica", 8))
+        _gamma_lbl.pack(side=tk.LEFT, padx=(8, 2))
+        _gamma_wrap = _slider(inner_ctrl, "", self._gamma_var, 0.1, 2.0,
+                              resolution=0.05, fmt="{:.2f}")
+        _gamma_wrap.pack(side=tk.LEFT, padx=(0, 6))
+
+        def _find_widgets(root, cls):
+            out = []
+            if isinstance(root, cls):
+                out.append(root)
+            for c in root.winfo_children():
+                out.extend(_find_widgets(c, cls))
+            return out
+
+        _gamma_scales  = _find_widgets(_gamma_wrap, tk.Scale)
+        _gamma_entries = _find_widgets(_gamma_wrap, tk.Entry)
+        # Capture each Scale's real colours once, so dimming/restoring is a
+        # blend toward the card background rather than a hardcoded guess.
+        _gamma_scale_orig = [
+            dict(bg=w.cget('bg'), fg=w.cget('fg'), troughcolor=w.cget('troughcolor'),
+                activebackground=w.cget('activebackground'))
+            for w in _gamma_scales
+        ]
+        _gamma_entry_orig_fg = [w.cget('fg') for w in _gamma_entries]
+        _DIM_T = 0.75  # 0 = full colour, 1 = fully background (opacity ~25% when dimmed)
+
+        def _update_gamma_enabled(*_):
+            active = self._norm_mode.get() == "power"
+            state = tk.NORMAL if active else tk.DISABLED
+            _gamma_lbl.configure(fg=_step_lbl if active else _blend(_step_lbl, _card_bg, _DIM_T))
+            for w, orig in zip(_gamma_scales, _gamma_scale_orig):
+                try:
+                    w.configure(state=state)
+                    for opt, col in orig.items():
+                        w.configure(**{opt: col if active else _blend(col, _card_bg, _DIM_T)})
+                except Exception: pass
+            for w, orig_fg in zip(_gamma_entries, _gamma_entry_orig_fg):
+                try:
+                    w.configure(state=state,
+                               fg=orig_fg if active else _blend(orig_fg, _card_bg, _DIM_T),
+                               disabledforeground=_blend(orig_fg, _card_bg, _DIM_T),
+                               disabledbackground=_card_bg)
+                except Exception: pass
+        self._norm_mode.trace_add('write', _update_gamma_enabled)
+        _update_gamma_enabled()
+
+        # ── Body: sliders (left) + dynamic spectrum (right), two equal cols ───
+        body = tk.Frame(self, bg=_bg)
+        body.pack(fill=tk.BOTH, expand=True)
+        body.columnconfigure(0, weight=1, uniform="half")
+        body.columnconfigure(1, weight=1, uniform="half")
+        body.rowconfigure(0, weight=1)
+        left  = tk.Frame(body, bg=_bg)
+        left.grid(row=0, column=0, sticky="nsew")
+        right = tk.Frame(body, bg=_bg)
+        right.grid(row=0, column=1, sticky="nsew", padx=(6, 4), pady=(4, 2))
+
+        def _small_card(parent, title=None):
+            return _viewer_small_card(parent, _p, title)
+
+        def _sym_slider_row(parent, segs, var, lo, hi, resolution=0.01,
+                            fmt="{:.2f}", integer=False):
+            return _viewer_sym_slider_row(parent, self.master, _p, segs, var,
+                                          lo, hi, resolution=resolution,
+                                          fmt=fmt, integer=integer)
+
+        _rng = (self._data_max - self._data_min) or 1.0
+        self._vmin_var    = tk.DoubleVar(value=self._data_min)
+        self._vmax_var    = tk.DoubleVar(value=self._data_max)
+        self._channel_var = tk.IntVar(value=len(self._channels) // 2)
+
+        # Threshold card — λ(S_max): contour-mask threshold (% of source peak)
+        _thresh_card = _small_card(left, "Source contour threshold (% of peak)")
+        _sym_slider_row(_thresh_card, [("λ(S", "n"), ("max", "s"), (")", "n")],
+                        self._thresh_var, 0.1, 50.0, resolution=0.1, fmt="{:.1f}")
+        self._thresh_var.trace_add('write', lambda *_: self._draw())
+
+        # Colour-scale card — V_min / V_max / γ (power-law exponent), no heading
+        _vrange_card = _small_card(left)
+        _vmin_row = _sym_slider_row(_vrange_card, [("V", "n"), ("min", "s")],
+                        self._vmin_var, self._data_min, self._data_max,
+                        resolution=_rng / 500, fmt="{:.2e}")
+        _vmax_row = _sym_slider_row(_vrange_card, [("V", "n"), ("max", "s")],
+                        self._vmax_var, self._data_min, self._data_max,
+                        resolution=_rng / 500, fmt="{:.2e}")
+        # Kept so the Clean/Noisy toggle (see the "View:" pills above) can
+        # reconfigure these sliders' from_/to bounds to match whichever
+        # cube is active — without this, dragging past the OTHER cube's
+        # range would be silently clamped, and the colour scale wouldn't
+        # reflect what's actually being displayed.
+        self._vmin_scale = _find_scale(_vmin_row)
+        self._vmax_scale = _find_scale(_vmax_row)
+        # γ (power-law exponent) now lives next to the "power" norm pill in
+        # the control bar, not here — see _gamma_wrap above.
+
+        # Channel card — Play/Pause + FPS on the left, the channel slider
+        # filling the rest of the same row, with the channel/velocity
+        # readout below.
+        _chan_card = _small_card(left, "Channel")
+        _chan_row = tk.Frame(_chan_card, bg=_card_bg)
+        _chan_row.pack(fill=tk.X, pady=(0, 4))
+
+        self._playing = False
+        self._play_after_id = None
+        self._fps_var = tk.DoubleVar(value=8.0)
+
+        _play_font = _tkfont.Font(family="Helvetica", size=10, weight="bold")
+        _play_w = max(_play_font.measure("⏸"), _play_font.measure("▶")) + 16
+
+        _play_cv = tk.Canvas(_chan_row, width=_play_w, height=_PILL_H,
+                             highlightthickness=0, bd=0, bg=_card_bg,
+                             cursor="pointinghand")
+        _play_cv.pack(side=tk.LEFT, padx=(0, 6))
+
+        def _draw_play_btn(hover=False):
+            _play_cv.delete("all")
+            fill = _accent if self._playing else (_p['pill_hov'] if hover else _p['pill_nor'])
+            txt_col = _p['fg_on_accent'] if self._playing else _step_lbl
+            _play_cv.create_rectangle(0, 0, _play_w, _PILL_H, fill=fill, outline=fill)
+            symbol = "⏸" if self._playing else "▶"
+            _play_cv.create_text(_play_w // 2, _PILL_H // 2, text=symbol,
+                                 fill=txt_col, font=_play_font)
+
+        def _advance_channel():
+            if not self._playing or not self.winfo_exists():
+                return
+            n = len(self._channels)
+            nxt = (int(self._channel_var.get()) + 1) % n
+            self._channel_var.set(nxt)
+            fps = max(float(self._fps_var.get()), 0.1)
+            self._play_after_id = self.after(int(1000 / fps), _advance_channel)
+
+        def _toggle_play(_e=None):
+            self._playing = not self._playing
+            _draw_play_btn()
+            if self._playing:
+                _advance_channel()
+            elif self._play_after_id is not None:
+                self.after_cancel(self._play_after_id)
+                self._play_after_id = None
+
+        _play_cv.bind("<ButtonRelease-1>", _toggle_play)
+        _play_cv.bind("<Enter>", lambda _e: _draw_play_btn(hover=True) if not self._playing else None)
+        _play_cv.bind("<Leave>", lambda _e: _draw_play_btn())
+        _draw_play_btn()
+
+        tk.Label(_chan_row, text="FPS:", bg=_card_bg, fg=_step_lbl,
+                 font=("Helvetica", 8)).pack(side=tk.LEFT, padx=(0, 4))
+
+        # +/- stepper (accent square buttons flanking a numeric readout),
+        # same visual language as the app's other pill buttons, instead of
+        # a cramped mini-slider.
+        _FPS_MIN, _FPS_MAX = 1, 30
+        _step_font = _tkfont.Font(family="Helvetica", size=9, weight="bold")
+        _step_btn_w = _step_font.measure("−") + 12
+        _fps_val_w = _step_font.measure("30") + 12
+
+        def _make_step_btn(parent, symbol, on_click):
+            cv = tk.Canvas(parent, width=_step_btn_w, height=_PILL_H,
+                           highlightthickness=0, bd=0, bg=_card_bg,
+                           cursor="pointinghand")
+
+            def _redraw(hover=False):
+                cv.delete("all")
+                fill = _p['pill_hov'] if hover else _p['pill_nor']
+                cv.create_rectangle(0, 0, _step_btn_w, _PILL_H, fill=fill, outline=fill)
+                cv.create_text(_step_btn_w // 2, _PILL_H // 2, text=symbol,
+                               fill=_accent, font=_step_font)
+
+            cv.bind("<ButtonRelease-1>", lambda _e: on_click())
+            cv.bind("<Enter>", lambda _e: _redraw(hover=True))
+            cv.bind("<Leave>", lambda _e: _redraw())
+            _redraw()
+            return cv
+
+        _fps_val_lbl = tk.Label(_chan_row, text=str(int(self._fps_var.get())),
+                                bg=_card_bg, fg=_accent, font=_step_font,
+                                width=2, anchor="center")
+
+        def _set_fps(v):
+            self._fps_var.set(max(_FPS_MIN, min(_FPS_MAX, v)))
+            _fps_val_lbl.configure(text=str(int(self._fps_var.get())))
+
+        _make_step_btn(_chan_row, "−", lambda: _set_fps(int(self._fps_var.get()) - 1)
+                      ).pack(side=tk.LEFT)
+        _fps_val_lbl.pack(side=tk.LEFT, padx=2)
+        _make_step_btn(_chan_row, "+", lambda: _set_fps(int(self._fps_var.get()) + 1)
+                      ).pack(side=tk.LEFT, padx=(0, 10))
+
+        _slider(_chan_row, "", self._channel_var, 0, len(self._channels) - 1,
+                resolution=1, fmt="{:d}", integer=True).pack(
+                side=tk.LEFT, fill=tk.X, expand=True)
+
+        self._ch_lbl = tk.Label(_chan_card, text="", bg=_card_bg, fg=_accent,
+                                font=("Helvetica", 8, "italic"), anchor="w",
+                                justify="left")
+        self._ch_lbl.pack(fill=tk.X, anchor="w")
+
+        for _v in (self._vmin_var, self._vmax_var, self._channel_var, self._gamma_var):
+            _v.trace_add('write', lambda *_: self._draw())
+
+        self._build_spectrum(right)
 
         self._draw()
         self.update_idletasks()
@@ -594,8 +1128,8 @@ class SliceViewer(tk.Toplevel):
     # ── Normalization ─────────────────────────────────────────────────────────
     def _norm(self):
         from matplotlib.colors import Normalize, LogNorm, PowerNorm
-        vmin = float(self._vmin_sl.get())
-        vmax = float(self._vmax_sl.get())
+        vmin = float(self._vmin_var.get())
+        vmax = float(self._vmax_var.get())
         if vmin >= vmax:
             vmax = vmin + 1e-9
         mode = self._norm_mode.get()
@@ -604,7 +1138,8 @@ class SliceViewer(tk.Toplevel):
             vmax = max(vmax, vmin + 1e-12)
             return LogNorm(vmin=vmin, vmax=vmax)
         elif mode == "power":
-            return PowerNorm(gamma=0.5, vmin=max(vmin, 0), vmax=vmax)
+            gamma = float(self._gamma_var.get())
+            return PowerNorm(gamma=max(gamma, 1e-3), vmin=max(vmin, 0), vmax=vmax)
         return Normalize(vmin=vmin, vmax=vmax)
 
     def _fmt_val(self, v: float) -> str:
@@ -612,33 +1147,133 @@ class SliceViewer(tk.Toplevel):
             return f"10^{np.log10(max(abs(v), 1e-30)):.2f}"
         return f"{v:.2e}"
 
+    # ── Dynamic per-source spectrum (bottom-right) ──────────────────────────────
+    def _build_spectrum(self, parent):
+        """Spectrum panel: a dashed whole-field "Total" curve plus one curve per
+        currently-selected source, each in its source colour, redrawn on toggle.
+        A dashed marker tracks the current channel."""
+        _p = self._pal
+        nchan = self._cube.shape[0]
+        if len(self._vels) == nchan and np.ptp(self._vels) > 0:
+            self._spec_x = np.asarray(self._vels, dtype=float)
+            self._spec_xlabel = r'Velocity (km s$^{-1}$)'
+        else:
+            self._spec_x = np.arange(nchan, dtype=float)
+            self._spec_xlabel = "Channel"
+
+        self._spec_total = np.nansum(self._cube, axis=(1, 2))
+        self._spec_curve: dict = {}
+        if self._per_gal is not None:
+            for i in range(self._n_gals):
+                self._spec_curve[i] = np.nansum(self._per_gal[i], axis=(1, 2))
+
+        fig = plt.Figure(figsize=(2.6, 2.2), dpi=96, facecolor=_p['log_bg'])
+        ax  = fig.add_subplot(111)
+        self._spec_fig    = fig
+        self._spec_ax     = ax
+        self._spec_canvas = FigureCanvasTkAgg(fig, master=parent)
+        self._spec_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        self._last_vis_key = None
+        self._redraw_spectrum()
+
+    def _spec_visible_ids(self):
+        return frozenset(i for i, v in self._src_visible.items() if v.get())
+
+    def _spec_visible_items(self):
+        """[(label, i, hex_rgb)] for visible sources, coloured to match contours."""
+        items = []
+        for i in range(self._n_gals):
+            v = self._src_visible.get(i)
+            if v is not None and not v.get():
+                continue
+            items.append((_src_label(i), i, _SRC_PALETTE[i % len(_SRC_PALETTE)]))
+        return items
+
+    def _redraw_spectrum(self):
+        _p  = self._pal
+        ax  = self._spec_ax
+        ax.clear()
+        ax.set_facecolor(_p['log_bg'])
+        xs  = self._spec_x
+        txt = _p['step_lbl']
+
+        if self._per_gal is not None:
+            ax.plot(xs, self._spec_total, color=_p['dim_txt'], lw=1.0, ls="--",
+                    label="Total")
+            items = self._spec_visible_items()
+            for label, i, rgb in items:
+                ax.plot(xs, self._spec_curve[i], color=rgb, lw=1.2, label=label)
+            if items:
+                leg = ax.legend(fontsize=6, ncol=1, framealpha=0.6,
+                                facecolor=_p['log_bg'], edgecolor=_p['dim'],
+                                labelcolor=txt, handlelength=1.2,
+                                handletextpad=0.4, borderpad=0.3, loc="best")
+                leg.get_frame().set_linewidth(0.6)
+            self._last_vis_key = self._spec_visible_ids()
+        else:
+            ax.plot(xs, self._spec_total, color=_p['accent'], lw=1.1)
+
+        ax.set_xlabel(self._spec_xlabel, color=txt, fontsize=9)
+        ax.set_ylabel(r'Jy beam$^{-1}$', color=txt, fontsize=9)
+        ax.tick_params(colors=txt, labelsize=8, length=3)
+        ax.margins(x=0.02)
+        for sp in ax.spines.values():
+            sp.set_edgecolor(_p['dim_txt'])
+            sp.set_linewidth(0.8)
+        ch = self._channels[int(self._channel_var.get())]
+        self._spec_vline = ax.axvline(self._spec_x[ch],
+                                      color=_p['accent_hov'], ls="--", lw=1.1)
+        self._spec_fig.tight_layout(pad=1.0)
+        self._spec_canvas.draw_idle()
+
+    def _update_spectrum_data(self):
+        """Replot per-source spectra when the source selection changes."""
+        if self._per_gal is None or not hasattr(self, "_spec_ax"):
+            return
+        if self._spec_visible_ids() == self._last_vis_key:
+            return
+        self._redraw_spectrum()
+
+    def _update_spectrum_marker(self, ch):
+        if not hasattr(self, "_spec_vline"):
+            return
+        x = float(self._spec_x[ch])
+        self._spec_vline.set_xdata([x, x])
+        self._spec_canvas.draw_idle()
+
     # ── Main draw ─────────────────────────────────────────────────────────────
     def _draw(self):
-        idx = int(self._slider.get())
+        idx = int(self._channel_var.get())
         ch  = self._channels[idx]
         img = self._cube[ch]
 
         norm = self._norm()
         cmap = self._cmap.get() + ("_r" if self._inverted.get() else "")
 
+        _pal = self._pal
         self._ax.clear()
         self._ax.set_xticks([]); self._ax.set_yticks([])
-        _pal = self._pal
         for spine in self._ax.spines.values():
-            spine.set_edgecolor(_pal['dim'])
-            spine.set_linewidth(0.6)
+            spine.set_edgecolor(_pal['dim_txt'])
+            spine.set_linewidth(0.8)
         self._ax.imshow(img, cmap=cmap, norm=norm, origin="lower")
+        # Pin the axes to the image extent so source bboxes / labels that fall
+        # near or past the FOV edge spill outside instead of shrinking the image.
+        self._ax.set_xlim(-0.5, img.shape[1] - 0.5)
+        self._ax.set_ylim(-0.5, img.shape[0] - 0.5)
+        self._ax.set_autoscale_on(False)
 
-        # Colorbar
+        # Colorbar — axes_locatable cax, styled exactly like NEMO
         self._fig.set_facecolor(_pal['log_bg'])
         self._ax_cb.set_facecolor(_pal['log_bg'])
         self._ax_cb.clear()
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
         sm.set_array([])
         cb = self._fig.colorbar(sm, cax=self._ax_cb)
-        cb.ax.tick_params(colors=_pal['accent'], labelsize=5, length=2)
+        cb.ax.tick_params(colors=_pal['step_lbl'], labelsize=9, length=3)
         cb.outline.set_edgecolor(_pal['dim'])
-        plt.setp(plt.getp(cb.ax, "yticklabels"), color=_pal['accent'], fontsize=5)
+        plt.setp(plt.getp(cb.ax, "yticklabels"), color=_pal['step_lbl'], fontsize=9)
+        cb.set_label(r'Jy beam$^{-1}$', color=_pal['step_lbl'], fontsize=9, labelpad=6)
 
         # Per-source contours + bboxes
         if self._per_gal is not None:
@@ -667,6 +1302,7 @@ class SliceViewer(tk.Toplevel):
                     (c0 - PAD, r0 - PAD),
                     c1 - c0 + 2*PAD, r1 - r0 + 2*PAD,
                     linewidth=0.8, edgecolor=lcol, facecolor="none", zorder=4,
+                    clip_on=False,
                 ))
                 label = "C" if i == 0 else f"S{i}"
                 self._ax.text(
@@ -674,7 +1310,7 @@ class SliceViewer(tk.Toplevel):
                     ha="center", va="center", fontsize=7,
                     color="black", fontweight="bold",
                     bbox=dict(boxstyle="circle,pad=0.22", fc=lcol, ec=lcol, lw=1.2),
-                    zorder=6,
+                    zorder=6, clip_on=False,
                 )
 
         # Beam + scalebar
@@ -695,10 +1331,8 @@ class SliceViewer(tk.Toplevel):
 
         self._canvas.draw()
 
-        # Update value labels
-        self._vmin_lbl.configure(text=self._fmt_val(float(self._vmin_sl.get())))
-        self._vmax_lbl.configure(text=self._fmt_val(float(self._vmax_sl.get())))
-        self._ch_idx_lbl.configure(text=f"{idx + 1}/{len(self._channels)}")
+        # Keep the spectrum marker on the current channel
+        self._update_spectrum_marker(ch)
 
         # Channel status label
         v = self._vels[ch] if ch < len(self._vels) else 0.0
@@ -713,7 +1347,7 @@ class SliceViewer(tk.Toplevel):
                 cube_max = float(np.nanmax(self._per_gal[i])) if np.nanmax(self._per_gal[i]) > 0 else 1e-9
                 if (self._per_gal[i, ch] >= thresh_frac * cube_max).any():
                     n_active += 1
-        parts = [f"Channel {ch}  ·  {v:.1f} km/s"]
+        parts = [f"{ch}  ·  {v:.1f} km s⁻¹"]
         if n_active:
             parts.append(f"{n_active} source(s) visible")
         self._ch_lbl.configure(text="  ·  ".join(parts))
@@ -728,7 +1362,7 @@ class AnalysisViewer(tk.Toplevel):
     spanning the full width below.
     """
 
-    def __init__(self, master, data, idx: int = 0):
+    def __init__(self, master, data, idx: int = 0, noisy_data=None):
         super().__init__(master)
 
         _p          = _VIEWER_PALETTES[_VIEWER_THEME]
@@ -743,10 +1377,28 @@ class AnalysisViewer(tk.Toplevel):
         self.configure(bg=_bg)
         self.resizable(True, True)
         self.title("SONGS — Analysis")
+        # Themed title bar, matching the main window. Re-applied on a short
+        # delay too, since the NSWindow may not exist yet on the first call.
+        _apply_window_appearance(self)
+        self.after(250, lambda: _apply_window_appearance(self))
         self._pal = _p
 
+        # ``noisy_data`` (optional, same shape/idx convention as ``data``) is
+        # only present when "Use Noise?" was Yes. Both TOTAL cube versions
+        # are kept; per-source/diffuse component arrays stay the clean
+        # ground truth either way (noise is an instrument effect on the
+        # observed total, not a per-source quantity) — see
+        # _build_display_cube(), which uses self._cube directly (whichever
+        # version is active) only when every component is selected.
         cube, meta = data[idx]
-        self._cube      = cube.astype(np.float32)
+        self._cube_clean = cube.astype(np.float32)
+        self._cube_noisy = None
+        if noisy_data:
+            noisy_cube, _noisy_meta = noisy_data[idx]
+            self._cube_noisy = noisy_cube.astype(np.float32)
+        # Default to noisy when available — matches what would actually be
+        # observed/saved.
+        self._cube = self._cube_noisy if self._cube_noisy is not None else self._cube_clean
         self._vels      = np.asarray(meta.get('average_vels', np.arange(cube.shape[0])))
         self._beam      = meta.get('beam_info')
         self._pix_scale = float(meta.get('pix_spatial_scale', 1.0))
@@ -771,97 +1423,85 @@ class AnalysisViewer(tk.Toplevel):
         top = tk.Frame(self, bg=_bg)
         top.pack(fill=tk.BOTH, expand=True)
 
-        sb = tk.Frame(top, bg=_bg, width=148)
+        sb = tk.Frame(top, bg=_bg, width=178)
         sb.pack(side=tk.LEFT, fill=tk.Y, padx=(6, 2), pady=6)
         sb.pack_propagate(False)
 
         tk.Label(sb, text="Sources", bg=_bg, fg=_accent,
                  font=("Helvetica", 9, "bold")).pack(pady=(4, 6), anchor="w")
 
-        # Total spectrum checkbox
-        self._show_total = tk.BooleanVar(value=True)
-        tot_row = tk.Frame(sb, bg=_bg)
-        tot_row.pack(fill=tk.X, pady=1, anchor="w")
-        tk.Label(tot_row, text="—", bg=_bg, fg=_accent,
-                 font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=(0, 2))
-        tk.Checkbutton(tot_row, text="Total", variable=self._show_total,
-                       command=self._draw,
-                       bg=_bg, fg=_step_lbl, selectcolor=_accent,
-                       activebackground=_bg, activeforeground=_accent_hov,
-                       font=("Helvetica", 8), relief=tk.FLAT,
-                       anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
-        tk.Frame(sb, bg=_accent, height=1).pack(fill=tk.X, pady=(3, 5))
+        # ── Source / component pills (clickable, pointing-hand cursor) ─────────
+        from tkinter import font as _tkfont
+        _pill_font = _tkfont.Font(family="Helvetica", size=8, weight="bold")
 
+        self._show_total   = tk.BooleanVar(value=True)
         self._src_visible: dict[int, tk.BooleanVar] = {}
-        for i in range(self._n_gals):
-            col     = _SRC_PALETTE[i % len(_SRC_PALETTE)]
-            hex_col = _rgb_to_hex(col)
-            var     = tk.BooleanVar(value=True)
-            self._src_visible[i] = var
-            row = tk.Frame(sb, bg=_bg)
-            row.pack(fill=tk.X, pady=1, anchor="w")
-            tk.Label(row, text="■", bg=_bg, fg=hex_col,
-                     font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=(0, 2))
-            tk.Checkbutton(row, text=_src_label(i), variable=var,
-                           command=self._draw,
-                           bg=_bg, fg=_step_lbl, selectcolor=_accent,
-                           activebackground=_bg, activeforeground=_accent_hov,
-                           font=("Helvetica", 8), relief=tk.FLAT,
-                           anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        # Diffuse component checkboxes
         self._show_halo    = tk.BooleanVar(value=True)
         self._show_bridges = tk.BooleanVar(value=True)
         self._show_diffuse = tk.BooleanVar(value=True)  # fallback legacy
+
+        # Collect every pill label up front so one fixed width keeps the column
+        # uniform (matches the SliceViewer source pills).
+        _labels = ["Total"] + [_src_label(i) for i in range(self._n_gals)]
+        if self._halo_cube is not None:
+            _labels.append("Diffuse Halo")
+        if self._bridges_cube is not None:
+            _labels.append("Bridges")
+        if self._diffuse_cube is not None:
+            _labels.append("Diffuse")
+        _PILL_W = max((_pill_font.measure(lbl) for lbl in _labels), default=80) + 16
+
+        def _pill(label, var, swatch, swatch_color):
+            _viewer_pill(sb, _p, label, var, self._draw, swatch=swatch,
+                         swatch_color=swatch_color, pill_w=_PILL_W,
+                         pill_font=_pill_font)
+
+        _pill("Total", self._show_total, "—", _accent)
+        tk.Frame(sb, bg=_accent, height=1).pack(fill=tk.X, pady=(3, 5))
+
+        for i in range(self._n_gals):
+            self._src_visible[i] = tk.BooleanVar(value=True)
+            _pill(_src_label(i), self._src_visible[i], "■",
+                  _rgb_to_hex(_SRC_PALETTE[i % len(_SRC_PALETTE)]))
 
         _has_components = (self._halo_cube is not None or self._bridges_cube is not None
                            or self._diffuse_cube is not None)
         if _has_components:
             tk.Frame(sb, bg=_dim, height=1).pack(fill=tk.X, pady=(10, 5))
-
-            def _diff_cb(text, var, icon="▒"):
-                row = tk.Frame(sb, bg=_bg)
-                row.pack(fill=tk.X, pady=1, anchor="w")
-                tk.Label(row, text=icon, bg=_bg, fg=_step_lbl,
-                         font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=(0, 2))
-                tk.Checkbutton(row, text=text, variable=var, command=self._draw,
-                               bg=_bg, fg=_step_lbl, selectcolor=_accent,
-                               activebackground=_bg, activeforeground=_accent_hov,
-                               font=("Helvetica", 8), relief=tk.FLAT,
-                               anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
-
             if self._halo_cube is not None:
-                _diff_cb("Diffuse Halo", self._show_halo, "◉")
+                _pill("Diffuse Halo", self._show_halo, "◉", _step_lbl)
             if self._bridges_cube is not None:
-                _diff_cb("Bridges", self._show_bridges, "▒")
+                _pill("Bridges", self._show_bridges, "▒", _step_lbl)
             if self._diffuse_cube is not None:
-                _diff_cb("Diffuse", self._show_diffuse, "▒")
+                _pill("Diffuse", self._show_diffuse, "▒", _step_lbl)
 
-        # ── Threshold slider ──────────────────────────────────────────────────
-        tk.Frame(sb, bg=_dim, height=1).pack(fill=tk.X, pady=(10, 5))
-        tk.Label(sb, text="Moment mask", bg=_bg, fg=_accent,
-                 font=("Helvetica", 8, "bold")).pack(anchor="w", pady=(0, 2))
-        tk.Label(sb, text="Threshold % of peak flux.\nPixels below are masked\nin Moment 1.",
-                 bg=_bg, fg=_step_lbl, font=("Helvetica", 7),
-                 justify="left").pack(anchor="w", pady=(0, 4))
+        # ── Clean/Noisy toggle — only shown when a noisy preview is
+        # available ("Use Noise?" was Yes at generation time). ─────────────
+        if self._cube_noisy is not None:
+            tk.Frame(sb, bg=_dim, height=1).pack(fill=tk.X, pady=(10, 5))
+            tk.Label(sb, text="View", bg=_bg, fg=_accent,
+                     font=("Helvetica", 9, "bold")).pack(pady=(0, 4), anchor="w")
+            self._view_mode = tk.StringVar(value="Noisy")
+            _view_row = tk.Frame(sb, bg=_bg)
+            _view_row.pack(anchor="w")
 
+            def _on_view_mode_change():
+                self._cube = (self._cube_noisy if self._view_mode.get() == "Noisy"
+                             else self._cube_clean)
+                self._draw()
+
+            _viewer_pill_group(_view_row, _p, ("Clean", "Noisy"), self._view_mode,
+                               _on_view_mode_change, bg=_bg)
+
+        # ── Threshold — same card + symbol style as the SliceViewer ────────────
         self._thresh_var = tk.DoubleVar(value=5.0)
-        _sl_border = _p['slider_border']
-        _fg_on_acc = _p['fg_on_accent']
-
-        thresh_wrap = tk.Frame(sb, bg=_sl_border, padx=1, pady=1)
-        thresh_wrap.pack(fill=tk.X, pady=(0, 4))
-        thresh_inner = tk.Frame(thresh_wrap, bg=_card_bg)
-        thresh_inner.pack(fill='both', expand=True)
-        self._thresh_sl = tk.Scale(
-            thresh_inner, from_=0.1, to=50.0, resolution=0.1,
-            orient=tk.HORIZONTAL, variable=self._thresh_var,
-            command=lambda _v: self._draw(),
-            bg=_card_bg, fg=_accent, troughcolor=_card_bg,
-            activebackground=_accent_hov, highlightthickness=0,
-            sliderrelief=tk.FLAT, bd=0, width=14, showvalue=True,
-        )
-        self._thresh_sl.pack(fill='x', expand=True)
+        tk.Frame(sb, bg=_dim, height=1).pack(fill=tk.X, pady=(10, 5))
+        _thresh_card = _viewer_small_card(sb, _p, "Moment-1 mask (% of peak)")
+        _viewer_sym_slider_row(_thresh_card, self.master, _p,
+                               [("λ(S", "n"), ("max", "s"), (")", "n")],
+                               self._thresh_var, 0.1, 50.0,
+                               resolution=0.1, fmt="{:.1f}")
+        self._thresh_var.trace_add('write', lambda *_: self._draw())
 
         # ── Matplotlib figure ─────────────────────────────────────────────────
         self._fig = plt.Figure(figsize=(9, 7), dpi=96, facecolor=_log_bg)
@@ -871,13 +1511,29 @@ class AnalysisViewer(tk.Toplevel):
         self._draw()
         self.update_idletasks()
         self.resizable(True, True)
-        self.geometry("810x760")
+        self.geometry("960x800")
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _build_display_cube(self) -> np.ndarray:
-        """Sum selected per-galaxy cubes plus selected diffuse components."""
+        """Sum selected per-galaxy cubes plus selected diffuse components.
+
+        When every component is selected (the default), this returns
+        ``self._cube`` (the active clean-or-noisy TOTAL) directly instead
+        of re-summing the per-source arrays — those stay clean-only always
+        (noise isn't decomposable per source), so re-summing them would
+        silently drop the noise from the moment maps / "Total" spectrum
+        line whenever "Noisy" is selected. Any subset selection still falls
+        back to summing the (necessarily clean) selected components."""
         if self._per_gal is None:
+            return self._cube
+        all_selected = (
+            all(v.get() for v in self._src_visible.values())
+            and (self._show_halo.get() if self._halo_cube is not None else True)
+            and (self._show_bridges.get() if self._bridges_cube is not None else True)
+            and (self._show_diffuse.get() if self._diffuse_cube is not None else True)
+        )
+        if all_selected:
             return self._cube
         display = np.zeros_like(self._cube)
         for i, var in self._src_visible.items():
@@ -898,16 +1554,21 @@ class AnalysisViewer(tk.Toplevel):
         _step_lbl = _pal['step_lbl']
         _dim      = _pal['dim']
 
-        _white = '#ffffff'
+        _white = '#ffffff'          # text/markers drawn over the (dark) images
+        _txt   = _pal['sym_fg']     # text on the figure background (black in light)
 
         self._fig.clf()
 
-        # Grid: thin colorbar row on top, moment maps, spectrum
+        # Grid: thin colorbar row on top, moment maps, spectrum. top=0.90
+        # (rather than 0.96) leaves headroom above the colorbars — their
+        # tick/unit labels sit above the bars themselves (set_label_position
+        # ('top') below) and were getting clipped by the figure edge with
+        # only a 4% margin.
         gs = self._fig.add_gridspec(
             3, 2,
-            height_ratios=[0.05, 1.1, 0.9],
+            height_ratios=[0.08, 1.1, 0.9],
             hspace=0.18, wspace=0.12,
-            left=0.13, right=0.97, top=0.96, bottom=0.10,
+            left=0.13, right=0.97, top=0.90, bottom=0.10,
         )
         cax0  = self._fig.add_subplot(gs[0, 0])
         cax1  = self._fig.add_subplot(gs[0, 1])
@@ -948,7 +1609,7 @@ class AnalysisViewer(tk.Toplevel):
 
         def _inner_title(ax, text):
             ax.text(0.03, 0.97, text, transform=ax.transAxes,
-                    color=_white, fontsize=10, fontweight='bold',
+                    color=_txt, fontsize=10, fontweight='bold',
                     va='top', ha='left',
                     bbox=dict(boxstyle='round,pad=0.3', facecolor=_bg,
                               edgecolor=_dim, alpha=0.75, linewidth=0.6))
@@ -961,9 +1622,9 @@ class AnalysisViewer(tk.Toplevel):
                            extent=extent, vmin=0, vmax=vmax0)
         _inner_title(ax_m0, "Moment 0")
         cb0 = self._fig.colorbar(im0, cax=cax0, orientation='horizontal')
-        cb0.ax.tick_params(colors=_white, labelsize=7)
+        cb0.ax.tick_params(colors=_txt, labelsize=7, pad=3)
         cb0.outline.set_edgecolor(_dim)
-        cb0.set_label(r'Jy beam$^{-1}$ km s$^{-1}$', color=_white, fontsize=8)
+        cb0.set_label(r'Jy beam$^{-1}$ km s$^{-1}$', color=_txt, fontsize=8, labelpad=6)
         cax0.xaxis.set_ticks_position('top')
         cax0.xaxis.set_label_position('top')
         _beam(ax_m0); _scalebar(ax_m0)
@@ -987,9 +1648,9 @@ class AnalysisViewer(tk.Toplevel):
                            extent=extent, vmin=-vm1, vmax=vm1)
         _inner_title(ax_m1, "Moment 1")
         cb1 = self._fig.colorbar(im1, cax=cax1, orientation='horizontal')
-        cb1.ax.tick_params(colors=_white, labelsize=7)
+        cb1.ax.tick_params(colors=_txt, labelsize=7, pad=3)
         cb1.outline.set_edgecolor(_dim)
-        cb1.set_label(r'km s$^{-1}$', color=_white, fontsize=8)
+        cb1.set_label(r'km s$^{-1}$', color=_txt, fontsize=8, labelpad=6)
         cax1.xaxis.set_ticks_position('top')
         cax1.xaxis.set_label_position('top')
         _beam(ax_m1); _scalebar(ax_m1)
@@ -1025,11 +1686,11 @@ class AnalysisViewer(tk.Toplevel):
                        color=_step_lbl, lw=0.9, alpha=0.6,
                        linestyle='--', label="Diffuse", zorder=2)
 
-        ax_sp.set_xlabel("Velocity (km/s)", color=_white, fontsize=10)
-        ax_sp.set_ylabel("Flux Density (Jy/beam)", color=_white, fontsize=10)
-        ax_sp.tick_params(colors=_white, labelsize=9)
+        ax_sp.set_xlabel(r'Velocity (km s$^{-1}$)', color=_txt, fontsize=10)
+        ax_sp.set_ylabel(r'Flux Density (Jy beam$^{-1}$)', color=_txt, fontsize=10)
+        ax_sp.tick_params(colors=_txt, labelsize=9)
         leg = ax_sp.legend(fontsize=9, facecolor=_pal['card_bg'],
-                           edgecolor=_dim, labelcolor=_white)
+                           edgecolor=_dim, labelcolor=_txt)
 
         self._fig.set_facecolor(_pal['log_bg'])
         self._canvas.draw()

@@ -38,6 +38,7 @@ def init_phy(
     verbose=True,
     seed=None,
     diffuse_params=None,
+    allow_overlap=False,
 ):
     """
     Create and return a physically parameterised :class:`SONGSPhy` instance.
@@ -57,13 +58,29 @@ def init_phy(
     ----------
     All parameters are forwarded directly to the :class:`SONGSPhy`
     constructor. Refer to the class documentation for detailed descriptions
-    of each physical quantity.
+    of each physical quantity. Notably:
+
+    offset_gals : float or (float, float)
+        Distance of each satellite from the central galaxy, in kpc. A
+        scalar is the max offset (min 0); a ``(min, max)`` tuple bounds it
+        on both ends. This is always a true 3D distance, not the on-sky
+        projected distance.
+    allow_overlap : bool, default False
+        If ``False`` (default), satellites are kept apart from the central
+        galaxy and each other by a small separation floor so their images
+        don't literally coincide. If ``True``, that floor is dropped and
+        satellites may overlap, while still respecting ``offset_gals``.
 
     Returns
     -------
     SONGSPhy
         An initialized SONGSPhy generator configured for physical-unit
         parametrisation.
+
+    Example
+    -------
+    >>> import songs
+    >>> g = songs.init_phy(n_gals=3, offset_gals=(20, 60), allow_overlap=True)
     """
     return SONGSPhy(
         n_gals,
@@ -79,6 +96,7 @@ def init_phy(
         verbose,
         seed,
         diffuse_params,
+        allow_overlap=allow_overlap,
     )
 
 
@@ -96,6 +114,7 @@ def init(
     verbose=True,
     seed=None,
     diffuse_params=None,
+    allow_overlap=False,
 ):
     """
     Create and return a population-based :class:`SONGS` instance.
@@ -114,13 +133,29 @@ def init(
     ----------
     All parameters are forwarded directly to the :class:`SONGS`
     constructor. Refer to the class documentation for details on the sampling
-    strategy and parameter ranges.
+    strategy and parameter ranges. Notably:
+
+    offset_gals : float or (float, float)
+        Distance of each satellite from the central galaxy, in pixels. A
+        scalar is the max offset (min 0); a ``(min, max)`` tuple bounds it
+        on both ends. This is always a true 3D distance, not the on-sky
+        projected distance.
+    allow_overlap : bool, default False
+        If ``False`` (default), satellites are kept apart from the central
+        galaxy and each other by a small separation floor so their images
+        don't literally coincide. If ``True``, that floor is dropped and
+        satellites may overlap, while still respecting ``offset_gals``.
 
     Returns
     -------
     SONGS
         An initialized SONGS generator configured for population-based
         sampling in pixel space.
+
+    Example
+    -------
+    >>> import songs
+    >>> g = songs.init(n_gals=3, offset_gals=(30, 90), allow_overlap=True)
     """
     return SONGS(
         n_gals,
@@ -136,4 +171,5 @@ def init(
         verbose,
         seed,
         diffuse_params,
+        allow_overlap=allow_overlap,
     )
