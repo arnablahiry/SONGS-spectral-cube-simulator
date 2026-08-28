@@ -441,7 +441,7 @@ def parse_args(argv=None):
     p.add_argument('--grid-size', type=int, default=96,
                    help='Spatial pixel grid size (both axes) shared by every cube; FOV is '
                         'derived per cube from spatial_resolution to keep this fixed.')
-    p.add_argument('--spectral-resolution', type=int, default=20, help='km/s per channel.')
+    p.add_argument('--spectral-resolution', type=float, default=18.75, help='km/s per channel.')
     p.add_argument('--spatial-resolution-range', type=float, nargs=2, default=(0.625, 2.5),
                    metavar=('MIN', 'MAX'), help='kpc/px, drawn per cube.')
     p.add_argument('--bmin-px', type=float, default=4.0, help='Beam minor axis, pixels (fixed).')
@@ -454,7 +454,7 @@ def parse_args(argv=None):
                    help='Disable noise. NOTE: SongsCubeDataset requires noise-enabled data '
                         '(it pairs clean/noisy) — only pass this if you have your own '
                         'downstream use for clean-only cubes.')
-    p.add_argument('--sn-peak-range', type=float, nargs=2, default=(3.0, 100.0), metavar=('MIN', 'MAX'))
+    p.add_argument('--sn-peak-range', type=float, nargs=2, default=(3.0, 10.0), metavar=('MIN', 'MAX'))
 
     # --- Central galaxy ---
     p.add_argument('--re-kpc', type=float, default=5.0,
@@ -473,8 +473,8 @@ def parse_args(argv=None):
     p.add_argument('--angle-y-range', type=float, nargs=2, default=(0, 359), metavar=('MIN', 'MAX'))
 
     # --- Satellites ---
-    p.add_argument('--max-gals', type=int, default=3, help='1..max_gals galaxies per cube, uniform.')
-    p.add_argument('--sat-brightness-frac-range', type=float, nargs=2, default=(0.37, 0.50),
+    p.add_argument('--max-gals', type=int, default=4, help='1..max_gals galaxies per cube, uniform.')
+    p.add_argument('--sat-brightness-frac-range', type=float, nargs=2, default=(0.3, 0.5),
                    metavar=('MIN', 'MAX'),
                    help='Each satellite total flux, as a fraction of the central total flux.')
     p.add_argument('--sat-re-frac-range', type=float, nargs=2, default=(0.32, 0.48), metavar=('MIN', 'MAX'),
@@ -487,14 +487,14 @@ def parse_args(argv=None):
 
     # --- Diffuse structure (halo / bridges / tails); every range defaults to
     # DEFAULT_DIFFUSE_PARAMS[key] * (0.8, 1.2), matching the GUI's _dv(). ---
-    p.add_argument('--halo-se-factor-range', type=float, nargs=2, default=_diffuse_range('halo_Se_factor'))
-    p.add_argument('--halo-re-factor-range', type=float, nargs=2, default=_diffuse_range('halo_Re_factor'))
+    p.add_argument('--halo-se-factor-range', type=float, nargs=2, default=(0.035, 0.105))
+    p.add_argument('--halo-re-factor-range', type=float, nargs=2, default=(1.3, 1.7))
     p.add_argument('--halo-sigma-vz-range', type=float, nargs=2, default=_diffuse_range('halo_sigma_vz'))
-    p.add_argument('--bridge-se-factor-range', type=float, nargs=2, default=_diffuse_range('bridge_Se_factor'))
+    p.add_argument('--bridge-se-factor-range', type=float, nargs=2, default=(0.05, 0.135))
     p.add_argument('--bridge-width-start-factor-range', type=float, nargs=2,
                    default=_diffuse_range('bridge_width_start_factor'))
     p.add_argument('--bridge-width-end-factor-range', type=float, nargs=2,
-                   default=_diffuse_range('bridge_width_end_factor'))
+                   default=(0.6, 1.0))
     p.add_argument('--bridge-sigma-vz-range', type=float, nargs=2, default=_diffuse_range('bridge_sigma_vz'))
     p.add_argument('--tail-se-factor-range', type=float, nargs=2, default=_diffuse_range('tail_Se_factor'))
     p.add_argument('--tail-vel-gradient-range', type=float, nargs=2, default=_diffuse_range('tail_vel_gradient'))
