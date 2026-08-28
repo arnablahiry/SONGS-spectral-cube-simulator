@@ -1,7 +1,11 @@
 <p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/arnablahiry/SONGS-spectral-cube-simulator/main/assets/songs_banner_dark.png" />
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/arnablahiry/SONGS-spectral-cube-simulator/main/assets/songs_banner.png" />
     <img src="https://raw.githubusercontent.com/arnablahiry/SONGS-spectral-cube-simulator/main/assets/songs_banner.png"
          alt="SONGS banner"
          width="100%" />
+  </picture>
 </p>
 
 <p align="center">

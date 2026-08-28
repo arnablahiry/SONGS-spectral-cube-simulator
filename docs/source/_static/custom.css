@@ -1,0 +1,18 @@
+/* index.md's title heading is kept in the source (Sphinx needs a real
+   section/title node for the page <title> and sidebar) but is visually
+   hidden, since the banner image directly below it already serves as the
+   page's visible heading. Scoped to that specific heading's auto-generated
+   section id, not a reusable class, so it doesn't affect any other page —
+   if the heading text in index.md changes, this id must be updated to
+   match (Sphinx slugifies the heading text to produce it). */
+#songs-spectral-observations-of-non-stationary-galactic-structures > h1 {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
