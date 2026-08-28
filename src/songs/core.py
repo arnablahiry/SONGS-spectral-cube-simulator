@@ -71,6 +71,10 @@ from astrodendro import Dendrogram
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from .visualise import *
 
+# np.trapezoid replaced the now-removed np.trapz in NumPy 2.0; fall back to
+# np.trapz on older NumPy so this module works across the 1.x/2.x split.
+_trapezoid = getattr(np, 'trapezoid', None) or np.trapz
+
 
 # Default diffuse-emission knobs. Units: lengths in pixels (of the full output
 # grid, same pixel scale as the per-galaxy init grid); velocities in km/s.
@@ -631,7 +635,7 @@ def _build_diffuse_cubes(grid_size, galaxy_centers, gal_params_list,
         _ramp_out_fine = np.clip((s_end - _s_fine) / fade, 0.0, 1.0)
         _window_fine = np.minimum(_ramp_in_fine, _ramp_out_fine)
         _flux_per_unit_s = Se_br * _window_fine * 2.0 * np.pi * (_sigma_fine * pix_spatial_scale) ** 2
-        _bridge_target_sum = float(np.trapezoid(_flux_per_unit_s, _s_fine) * sep * pix_spatial_scale)
+        _bridge_target_sum = float(_trapezoid(_flux_per_unit_s, _s_fine) * sep * pix_spatial_scale)
         _bridge_actual_sum = float(bridge_flux.sum())
         if _bridge_actual_sum > 1e-30:
             bridge_flux = bridge_flux * (_bridge_target_sum / _bridge_actual_sum)
