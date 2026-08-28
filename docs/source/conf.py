@@ -16,7 +16,7 @@ release = '1.0.1'
 
 import os
 import sys
-sys.path.insert(0, os.path.abspath('../src'))  # points to GalCubeCraft/src
+sys.path.insert(0, os.path.abspath('../src'))  # points to SONGS-spectral-cube-simulator/src
 
 # Path for static files
 html_static_path = ['_static']

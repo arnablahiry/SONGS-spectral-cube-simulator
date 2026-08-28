@@ -1,23 +1,28 @@
-"""Plotting helpers for SONGS results.
+"""Plotting and visualisation support for SONGS-generated spectral cubes.
 
 This module provides small, focused plotting utilities that operate on the
 ``results`` list produced by :meth:`~SONGS.core.SONGS.generate_cubes`.
 Each public helper accepts the ``results`` container and an index selecting
 which generated cube to visualise. The functions are intentionally lightweight
 and return a Matplotlib ``(fig, ax)`` pair so callers (GUIs, scripts, tests)
-can further customise or save figures.
+can further customise or save figures. It also provides the interactive
+Tkinter viewer windows (:class:`SliceViewer`, :class:`AnalysisViewer`) used
+by the SONGS GUI to inspect generated cubes channel-by-channel and to browse
+per-source moment maps and spectra.
 
 Dependencies
 ------------
-- matplotlib (this module sets the ``TkAgg`` backend by default)
-- astrodendro (used to compute a crude mask for visual guides)
+- matplotlib (this module sets the ``TkAgg`` backend by default, unless an
+    inline backend is already active).
+- astrodendro, used to compute a coarse dendrogram-based mask that highlights
+    contiguous emission for the moment-map helpers.
 
 Notes
 -----
-- These helpers call :func:`_prepare_cube` to extract cube / metadata and to
-    compute a simple dendrogram-based mask used for moment maps. The dendrogram
-    parameters are deliberately conservative and may be tuned for different
-    signal-to-noise regimes.
+- :func:`_prepare_cube` extracts the cube and its metadata and computes the
+    dendrogram-based mask shared by the moment-map helpers. The dendrogram
+    parameters are deliberately conservative and may need tuning for
+    different signal-to-noise regimes.
 - The plotting functions attempt to save to ``figures/<shape>/`` when
     ``save=True`` is passed; save failures are intentionally ignored to keep
     UI flows robust.
@@ -61,7 +66,8 @@ def _prepare_cube(data, idx):
     Returns
     -------
     cube : ndarray
-        The spectral cube selected (shape ``n_vel x ny x nx``).
+        The spectral cube selected, shape ``(n_vel, ny, nx)``, flux density
+        per pixel (displayed as Jy/beam in the plotting functions below).
     meta : dict
         The metadata dictionary stored alongside the cube.
     beam_info : sequence
@@ -403,22 +409,54 @@ _SRC_PALETTE = [
 
 
 def _src_label(i: int) -> str:
+    """Return the display label for source index ``i`` (0 is the central galaxy)."""
     return "Central Galaxy" if i == 0 else f"Satellite {i}"
 
 
 def _rgb_to_hex(rgb) -> str:
+    """Convert an ``(r, g, b)`` triple in ``[0, 1]`` to a ``#rrggbb`` hex string."""
     return "#{:02x}{:02x}{:02x}".format(
         int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255))
 
 
 def _lighten(rgb, amount=0.3):
+    """Lighten an ``(r, g, b)`` triple by adding ``amount`` to each channel, clipped to 1.0."""
     return tuple(min(c + amount, 1.0) for c in rgb)
 
 
 def _main_slider(parent, label, var, from_, to, pal,
                  resolution=0.01, fmt="{:.2f}", integer=False):
-    """Replica of SONGSGUI.make_slider so viewer sliders match the main cards
-    exactly (soft-accent border, label above, editable value entry, snapping)."""
+    """Build a labelled slider matching the main GUI's card styling.
+
+    Mirrors ``SONGSGUI.make_slider`` (soft-accent border, label above,
+    editable value entry, resolution snapping) so viewer windows that lack
+    access to the main app instance can still render an identical slider.
+
+    Parameters
+    ----------
+    parent : tkinter widget
+        Container the slider frame is packed into.
+    label : str
+        Text shown above the slider; pass an empty string to omit it.
+    var : tk.DoubleVar or tk.IntVar
+        Variable kept in sync with both the ``tk.Scale`` and the entry box.
+    from_, to : float
+        Slider range.
+    pal : dict
+        Colour palette (see ``_VIEWER_PALETTES``) used for styling.
+    resolution : float, optional
+        Snapping step for both the scale and manually entered values.
+    fmt : str, optional
+        ``str.format`` template used to render the value in the entry box.
+    integer : bool, optional
+        If True, values are rounded to the nearest integer instead of
+        snapped to ``resolution``.
+
+    Returns
+    -------
+    tkinter widget
+        The outer bordered frame containing the label, scale, and entry.
+    """
     bg          = pal['card_bg']
     fg          = pal['step_lbl']
     acc         = pal['accent']
@@ -518,9 +556,24 @@ _PILL_H = 21
 
 
 def _find_scale(widget):
-    """Recursively find the first tk.Scale inside a widget tree — used to
-    reconfigure a slider's from_/to bounds after construction (e.g. when
-    the underlying data range changes, as with the Clean/Noisy toggle)."""
+    """Recursively find the first ``tk.Scale`` inside a widget tree.
+
+    Lets callers reconfigure a slider's ``from_``/``to`` bounds after
+    construction, e.g. when the underlying data range changes (as with the
+    Clean/Noisy toggle in :class:`SliceViewer`).
+
+    Parameters
+    ----------
+    widget : tkinter widget
+        Root of the widget subtree to search (typically a slider wrapper
+        frame returned by :func:`_main_slider` or ``SONGSGUI.make_slider`).
+
+    Returns
+    -------
+    tk.Scale or None
+        The first ``tk.Scale`` instance found via depth-first search, or
+        ``None`` if the subtree contains no scale widget.
+    """
     if isinstance(widget, tk.Scale):
         return widget
     for c in widget.winfo_children():
@@ -532,8 +585,12 @@ def _find_scale(widget):
 
 def _viewer_slider(parent, master, pal, label, var, lo, hi,
                    resolution=0.01, fmt="{:.2f}", integer=False):
-    """Prefer the real SONGSGUI.make_slider when the master is the app; else
-    fall back to the module-level replica so the slider matches the main cards."""
+    """Build a slider, delegating to the app's own slider factory when available.
+
+    Calls ``master.make_slider`` when ``master`` exposes one (i.e. it is the
+    running ``SONGSGUI`` instance), otherwise falls back to
+    :func:`_main_slider`, so the resulting slider looks identical either way.
+    """
     _gui_make = getattr(master, "make_slider", None)
     if callable(_gui_make):
         return _gui_make(parent, label, var, lo, hi,
@@ -543,7 +600,16 @@ def _viewer_slider(parent, master, pal, label, var, lo, hi,
 
 
 def _viewer_small_card(parent, pal, title=None):
-    """Replica of the main GUI's small_card (soft border + card body + heading)."""
+    """Build a small bordered card (soft border, card body, optional heading).
+
+    Replica of the main GUI's ``small_card`` layout, used by viewer windows
+    that don't have direct access to the ``SONGSGUI`` instance.
+
+    Returns
+    -------
+    tkinter widget
+        The inner frame that card content should be packed into.
+    """
     outer = tk.Frame(parent, bg=pal['sm_border'], padx=1, pady=1)
     outer.pack(fill='x', padx=8, pady=4)
     inner = tk.Frame(outer, bg=pal['card_bg'], padx=5, pady=6)
@@ -680,6 +746,28 @@ class SliceViewer(tk.Toplevel):
     vmin/vmax sliders, and (when per-galaxy cubes are available) a sources
     sidebar with per-source contours, bounding boxes, and intensity-threshold
     masks whose threshold percentage is tunable via a dedicated slider.
+
+    Parameters
+    ----------
+    master : tkinter widget
+        Parent window this viewer is opened as a ``Toplevel`` of.
+    data : sequence
+        The ``results`` container produced by ``SONGS.generate_cubes``.
+        ``data[idx]`` must be a ``(cube, meta)`` tuple where ``cube`` is a
+        NumPy array of shape ``(n_vel, ny, nx)`` in Jy/beam and ``meta`` is a
+        dict with keys including ``'average_vels'`` (km/s), ``'beam_info'``,
+        ``'pix_spatial_scale'`` (kpc/pixel), and optionally
+        ``'per_galaxy_cubes'`` (shape ``(n_gal, n_vel, ny, nx)``).
+    idx : int, optional
+        Index of the cube to display (default 0).
+    noisy_data : sequence or None, optional
+        A ``results``-like container in the same shape/idx convention as
+        ``data``, holding the noisy version of the same cube (present only
+        when noise was simulated at generation time). When given, the
+        viewer defaults to displaying the noisy cube and exposes a
+        Clean/Noisy toggle; per-source component arrays remain the clean
+        ground truth either way, since noise is an instrument effect on the
+        observed total rather than a per-source quantity.
     """
 
     def __init__(self, master, data, idx: int = 0, noisy_data=None):
@@ -735,9 +823,9 @@ class SliceViewer(tk.Toplevel):
         self._data_max   = float(np.nanmax(flat))
 
         # ── Matplotlib figure (colorbar via axes_locatable, like NEMO) ────────
-        # Extra width (+100, was +60) and a narrower main-axes fraction
-        # (0.86, was 0.90) give the vertical colorbar's rotated unit label
-        # enough room that it doesn't get clipped at the figure's right edge.
+        # The extra +100 px of figure width and the 0.86 main-axes fraction
+        # give the vertical colorbar's rotated unit label enough room that
+        # it doesn't get clipped at the figure's right edge.
         self._fig   = plt.Figure(figsize=((VW+100)/96, VW/96), dpi=96, facecolor=_log_bg)
         self._ax    = self._fig.add_axes([0.02, 0.02, 0.86, 0.96])
         self._ax.set_xticks([]); self._ax.set_yticks([])
@@ -1127,6 +1215,8 @@ class SliceViewer(tk.Toplevel):
 
     # ── Normalization ─────────────────────────────────────────────────────────
     def _norm(self):
+        """Build the Matplotlib ``Normalize`` instance for the current norm mode
+        (linear, log, or power) and vmin/vmax slider values."""
         from matplotlib.colors import Normalize, LogNorm, PowerNorm
         vmin = float(self._vmin_var.get())
         vmax = float(self._vmax_var.get())
@@ -1143,6 +1233,7 @@ class SliceViewer(tk.Toplevel):
         return Normalize(vmin=vmin, vmax=vmax)
 
     def _fmt_val(self, v: float) -> str:
+        """Format a colour-scale value for display, respecting the current norm mode."""
         if self._norm_mode.get() == "log":
             return f"10^{np.log10(max(abs(v), 1e-30)):.2f}"
         return f"{v:.2e}"
@@ -1177,6 +1268,7 @@ class SliceViewer(tk.Toplevel):
         self._redraw_spectrum()
 
     def _spec_visible_ids(self):
+        """Return a frozenset of source indices currently toggled visible."""
         return frozenset(i for i, v in self._src_visible.items() if v.get())
 
     def _spec_visible_items(self):
@@ -1190,6 +1282,7 @@ class SliceViewer(tk.Toplevel):
         return items
 
     def _redraw_spectrum(self):
+        """Fully redraw the spectrum panel (curves, legend, current-channel marker)."""
         _p  = self._pal
         ax  = self._spec_ax
         ax.clear()
@@ -1235,6 +1328,7 @@ class SliceViewer(tk.Toplevel):
         self._redraw_spectrum()
 
     def _update_spectrum_marker(self, ch):
+        """Move the dashed current-channel marker on the spectrum panel to channel ``ch``."""
         if not hasattr(self, "_spec_vline"):
             return
         x = float(self._spec_x[ch])
@@ -1243,6 +1337,8 @@ class SliceViewer(tk.Toplevel):
 
     # ── Main draw ─────────────────────────────────────────────────────────────
     def _draw(self):
+        """Redraw the current channel image, colorbar, per-source overlays, beam,
+        scalebar, and channel status label from the current slider/toggle state."""
         idx = int(self._channel_var.get())
         ch  = self._channels[idx]
         img = self._cube[ch]
@@ -1356,10 +1452,32 @@ class SliceViewer(tk.Toplevel):
 class AnalysisViewer(tk.Toplevel):
     """Combined analysis viewer: Moment 0, Moment 1, and integrated spectrum.
 
-    Source checkboxes (one per galaxy) and a Diffuse checkbox let the user
-    select which components contribute to all three panels. The layout mirrors
-    the nemo analysis viewer: two moment maps side-by-side on top, spectrum
-    spanning the full width below.
+    Source checkboxes (one per galaxy) and diffuse-component checkboxes let
+    the user select which components contribute to all three panels. The
+    layout mirrors the nemo analysis viewer: two moment maps side-by-side on
+    top, spectrum spanning the full width below.
+
+    Parameters
+    ----------
+    master : tkinter widget
+        Parent window this viewer is opened as a ``Toplevel`` of.
+    data : sequence
+        The ``results`` container produced by ``SONGS.generate_cubes``.
+        ``data[idx]`` must be a ``(cube, meta)`` tuple where ``cube`` is a
+        NumPy array of shape ``(n_vel, ny, nx)`` in Jy/beam and ``meta`` is a
+        dict with keys including ``'average_vels'`` (km/s), ``'beam_info'``,
+        ``'pix_spatial_scale'`` (kpc/pixel), and optionally
+        ``'per_galaxy_cubes'``, ``'halo_cube'``, and ``'bridges_cube'``.
+    idx : int, optional
+        Index of the cube to display (default 0).
+    noisy_data : sequence or None, optional
+        A ``results``-like container in the same shape/idx convention as
+        ``data``, holding the noisy version of the same cube (present only
+        when noise was simulated at generation time). When given, the
+        viewer defaults to displaying the noisy cube and exposes a
+        Clean/Noisy toggle; per-source and diffuse component arrays remain
+        the clean ground truth either way, since noise is an instrument
+        effect on the observed total rather than a per-source quantity.
     """
 
     def __init__(self, master, data, idx: int = 0, noisy_data=None):
@@ -1438,7 +1556,7 @@ class AnalysisViewer(tk.Toplevel):
         self._src_visible: dict[int, tk.BooleanVar] = {}
         self._show_halo    = tk.BooleanVar(value=True)
         self._show_bridges = tk.BooleanVar(value=True)
-        self._show_diffuse = tk.BooleanVar(value=True)  # fallback legacy
+        self._show_diffuse = tk.BooleanVar(value=True)  # toggles the total-minus-sources fallback diffuse component
 
         # Collect every pill label up front so one fixed width keeps the column
         # uniform (matches the SliceViewer source pills).
@@ -1548,6 +1666,8 @@ class AnalysisViewer(tk.Toplevel):
         return display
 
     def _draw(self):
+        """Rebuild and redraw the Moment 0, Moment 1, and spectrum panels from
+        the currently selected components (see :meth:`_build_display_cube`)."""
         _pal      = self._pal
         _bg       = _pal['log_bg']
         _accent   = _pal['accent']
@@ -1730,9 +1850,8 @@ def slice_view(data, idx=0, channel=None, cmap='viridis', parent=None):
     n_chan = int(cube.shape[0])
     # Default spectral index: middle channel
     if channel is None:
-        # Use the 1-based middle slice formula int((n_slices+1)/2) then
-        # convert to 0-based index by subtracting 1. This matches the
-        # user's requested behaviour for odd/even slice counts.
+        # 1-based middle slice, int((n_slices + 1) / 2), converted to a
+        # 0-based index by subtracting 1; handles odd and even slice counts.
         channel = int((n_chan + 1) / 2) - 1
     channel = int(max(0, min(int(channel), n_chan - 1)))
 
@@ -1741,8 +1860,8 @@ def slice_view(data, idx=0, channel=None, cmap='viridis', parent=None):
     fixed_vmin = 0.0
     fixed_vmax = float(np.nanmax(cube))
 
-    # Create a Tk Toplevel to host the canvas. If there's an existing Tk
-    # root, make a Toplevel so we don't create a second main window.
+    # Host the canvas in a Tk Toplevel. If a Tk root already exists, use a
+    # Toplevel instead of a second root window.
     if parent is not None:
         win = tk.Toplevel(master=parent)
     else:
@@ -1761,7 +1880,7 @@ def slice_view(data, idx=0, channel=None, cmap='viridis', parent=None):
     # Shift the subplot region slightly up so title, figure and colorbar sit
     # a bit higher in the Toplevel window by default.
     fig.subplots_adjust(top=0.95, bottom=0.12)
-    # Use the same colormap and units styling as moment0. Multiply single
+    # Use the same colormap and units styling as moment0.
     im = ax.imshow(cube[channel, :, :], cmap='RdBu_r', origin='lower', extent=extent, vmin=0.0, vmax=fixed_vmax)
     ax.set_xticks([])
     ax.set_yticks([])
@@ -1791,8 +1910,8 @@ def slice_view(data, idx=0, channel=None, cmap='viridis', parent=None):
             cb.draw_all()
         except Exception:
             pass
-    # (we will show the channel/velocity description below the figure as
-    # LaTeX text; keep the axes area free of a title overlay)
+    # The channel/velocity description is rendered below the figure as
+    # LaTeX text (see ax.set_title below), so no title overlay is added here.
     add_beam(ax, beam_info[0], beam_info[1], beam_info[2], xy_offset=(6*cube.shape[1]/72,6*cube.shape[1]/72), color='white')
 
     ax.set_aspect('equal')
@@ -1804,12 +1923,12 @@ def slice_view(data, idx=0, channel=None, cmap='viridis', parent=None):
     ax.text(x0+scalebar/2, y0 + ny*0.03, f'{scalebar*pix_spatial_scale:.1f} kpc',
         color='white', ha='center', va='bottom', fontsize=12, weight='bold')
 
-    # Embed the Matplotlib figure in the Tk window. We will draw once and
-    # compute sizes so we can fix the Toplevel geometry; this prevents the
-    # window from resizing when the controls (scale/labels) update.
+    # Embed the Matplotlib figure in the Tk window. The figure is drawn once
+    # below to measure its size and fix the Toplevel geometry, preventing
+    # the window from resizing when the controls (scale/labels) update.
     canvas = FigureCanvasTkAgg(fig, master=win)
     canvas_widget = canvas.get_tk_widget()
-    # Pack without expansion so the geometry we set stays stable
+    # Pack without expansion so the fixed geometry set below stays stable.
     canvas_widget.pack(side=tk.TOP)
 
     # Optional navigation toolbar
@@ -1826,9 +1945,8 @@ def slice_view(data, idx=0, channel=None, cmap='viridis', parent=None):
     ctrl = tk.Frame(win)
     ctrl.pack(side=tk.BOTTOM, fill=tk.X, padx=6, pady=6)
 
-    # Use a ttk-styled slider that matches the rest of the GUI. We create a
-    # small slider row with a right-aligned numeric label like the main app's
-    # `make_slider` helper so appearance is consistent.
+    # ttk-styled slider row with a right-aligned numeric label, matching the
+    # appearance of the main app's `make_slider` helper.
     label = ttk.Label(ctrl, text=f"Channel: {channel+1} : v = {vels[channel]:.1f} km/s")
     label.pack(side=tk.LEFT, padx=(0, 12))
 

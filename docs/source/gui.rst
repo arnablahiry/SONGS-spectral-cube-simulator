@@ -1,10 +1,8 @@
-GUI Reference
-=============
+GUI User Guide
+==============
 
-.. automodule:: songs.gui
-    :members:
-    :undoc-members:
-    :show-inheritance:
+For the full class/method API reference (auto-generated from
+``src/songs/gui.py`` docstrings), see :doc:`api_gui`.
 
 Overview
 --------

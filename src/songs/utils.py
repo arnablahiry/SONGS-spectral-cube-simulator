@@ -238,10 +238,6 @@ def create_circular_aperture_mask(cube, R_e, beam_width_px, x_center=None, y_cen
     # Calculate Euclidean distance from each pixel to aperture center
     dist_from_center = np.sqrt((X - x_center)**2 + (Y - y_center)**2)
 
-    # Legacy code for more complex aperture sizing (kept as documentation)
-    '''# Base aperture radius
-    aperture_radius = offset + k * R_e'''
-
     # Create 2D circular mask: True for pixels within aperture radius
     mask = dist_from_center <= D_aper/2
 

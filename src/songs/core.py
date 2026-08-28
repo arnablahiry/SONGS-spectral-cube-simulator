@@ -253,6 +253,47 @@ def _build_diffuse_cubes(grid_size, galaxy_centers, gal_params_list,
     with per-voxel Gaussian noise added inside each component before blending.
     All three components are binned into the final spectral cube using the
     same velocity-channel masks as the per-galaxy disk components.
+
+    Parameters
+    ----------
+    grid_size : int
+        Full output cube spatial dimension (voxels per side); the diffuse
+        cubes are built directly on this grid.
+    galaxy_centers : list of ndarray
+        ``(x, y, z)`` integer centre of each galaxy in cube pixels, central
+        galaxy first (as returned by :func:`place_galaxies`).
+    gal_params_list : list of dict
+        Per-galaxy parameter dicts with keys ``'Re'``, ``'Se'``, ``'hz'``
+        (pixel units), aligned with ``galaxy_centers``.
+    gal_systemic_vels : list of float
+        Flux-weighted systemic LOS velocity of each galaxy (km/s), aligned
+        with ``galaxy_centers``. Bridge and tail velocities are interpolated
+        relative to these values.
+    diffuse_params : dict
+        Diffuse-emission knobs; see :data:`DEFAULT_DIFFUSE_PARAMS` for the
+        full set of keys and units.
+    pix_spatial_scale : float, default 1.0
+        Physical scale (kpc/pixel) used to convert the analytic flux targets
+        (halo, bridges, tails) from physical to per-voxel units so that
+        total flux is conserved regardless of grid resolution.
+    rng : numpy.random.Generator or None
+        Random generator used for all stochastic draws (noise, tail
+        geometry). A fresh default generator is created when ``None``.
+
+    Returns
+    -------
+    diffuse_flux : ndarray, shape (grid_size, grid_size, grid_size)
+        Combined flux density of all diffuse components at each voxel.
+    diffuse_vel : ndarray, shape (grid_size, grid_size, grid_size)
+        Flux-weighted LOS velocity (km/s) of the combined diffuse emission.
+    streamer_per_galaxy : list of (ndarray, ndarray) or None
+        Per-galaxy tidal-tail ``(flux, velocity)`` cubes (each shaped like
+        ``diffuse_flux``), aligned with ``galaxy_centers``; used so a
+        satellite's streamer can be routed into its own ground-truth cube.
+    halo_flux_3d, halo_vel_3d : ndarray, shape (grid_size, grid_size, grid_size)
+        Flux and LOS velocity of the halo component alone.
+    bridge_flux_3d, bridge_vel_3d : ndarray, shape (grid_size, grid_size, grid_size)
+        Flux and LOS velocity of the combined bridge components alone.
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -383,14 +424,11 @@ def _build_diffuse_cubes(grid_size, galaxy_centers, gal_params_list,
         K = max(int(dp['tail_n_control_points']), 2)
 
         # End direction: mostly aligned with away_dir (the central-to-
-        # satellite axis passed in by the caller) with a small perpendicular
-        # jitter for natural-looking variety between tails. Previously this
-        # was a fully random unit vector only sign-flipped into away_dir's
-        # hemisphere, which let it land up to 90 degrees off that axis -
-        # visually the tail looked unrelated to the satellite it's meant to
-        # be pointing toward. perp/perp2 (already an orthonormal basis
-        # perpendicular to away_dir, computed above) keep the jitter
-        # confined to a narrow cone around away_dir instead.
+        # satellite axis passed in by the caller), with a small perpendicular
+        # jitter for natural-looking variety between tails. perp/perp2 (the
+        # orthonormal basis perpendicular to away_dir computed above) keep
+        # the jitter confined to a narrow cone around away_dir, so the tail
+        # always points recognisably toward the satellite it belongs to.
         end_spread = 0.12
         end_dir = away_dir + end_spread * (rng.normal() * perp + rng.normal() * perp2)
         end_dir /= np.linalg.norm(end_dir)
@@ -894,9 +932,6 @@ class SONGS:
         2
         """
 
-        # Initialize random seeds for reproducible results
-        #self.central_Re_kpc = 5 #kpc
-
         # Store configuration parameters
         self.resolution = resolution
         self.fname = fname
@@ -914,8 +949,10 @@ class SONGS:
         # overlap the central galaxy or each other.
         self.allow_overlap = bool(allow_overlap)
 
-        # Satellite brightness fraction relative to central Se.
-        # None → legacy random range [Se/2, Se/1.6].
+        # Satellite peak-brightness fraction relative to the central galaxy.
+        # None → sampled per-satellite from a uniform [0.15, 0.35] range
+        # (see __init__ below, where satellite Se is derived from this
+        # fraction so that peak_sat = frac * peak_central).
         self.sat_brightness_frac = sat_brightness_frac
         self.sat_vel_dispersion = float(sat_vel_dispersion)
 
@@ -932,7 +969,7 @@ class SONGS:
 
         # Determine number of galaxies per cube
         if n_gals is None:
-            # Default: 1–2 galaxies per cube (legacy behaviour).
+            # Default: sample 1-2 galaxies per cube.
             self.n_gals = np.random.randint(1, 3, n_cubes)
         elif isinstance(n_gals, (tuple, list)) and len(n_gals) == 2:
             # Random inclusive range per cube: n_gals=(lo, hi) → uniform in [lo, hi].
@@ -1364,13 +1401,12 @@ class SONGS:
         if self.verbose:
             print('Calculating and assigning velocity vectors...')
 
-        # Vectorised equivalent of the original per-voxel triple loop. The
-        # per-voxel values below depend only on (i, j) — never on k — so the
-        # loop recomputed the same (vx, vy, vmag) grid_size times over for
-        # nothing; only vel_z (independent dispersion noise) genuinely
-        # varies with k. This matters more now that the local box can grow
-        # well beyond init_grid_size for large-Re galaxies (see above),
-        # where an O(grid_size^3) Python loop becomes prohibitively slow.
+        # Per-voxel velocity values depend only on (i, j), never on k, so
+        # they are computed once on a 2D grid and broadcast along the third
+        # axis; only vel_z (independent dispersion noise) genuinely varies
+        # with k. This keeps the cost O(grid_size^2) rather than
+        # O(grid_size^3), which matters since the local box can grow well
+        # beyond init_grid_size for large-Re galaxies (see above).
         ii, jj = np.meshgrid(np.arange(grid_size), np.arange(grid_size), indexing='ij')
         pos_x = ii - centre[0]
         pos_y = jj - centre[1]
@@ -1575,8 +1611,8 @@ class SONGS:
         # Creating lower and upper limits for the velocity observation bins
         # Create velocity bin edges across all galaxies
 
-        min_vel = -600 #np.min([np.min(v) for v in all_velocities])
-        max_vel = 600 #np.max([np.max(v) for v in all_velocities])
+        min_vel = -600  # symmetric velocity range spanning the full cube (km/s)
+        max_vel = 600
 
         limit = np.max([abs(min_vel), abs(max_vel)])  # Use the maximum absolute value for limits
 
@@ -1670,7 +1706,7 @@ class SONGS:
 
             # Projecting along the LoS (Z-axis)
             spectral_slice = np.sum(combined_cube, axis=2)
-            spectral_cube_S_px.append(spectral_slice)  # Transpose if needed
+            spectral_cube_S_px.append(spectral_slice)
             for g in range(n_galaxies):
                 per_gal_slices[g].append(per_gal_slab[g])
 
@@ -1701,7 +1737,6 @@ class SONGS:
         halo_cube   = np.array(halo_slices[:n_ch_trim]).reshape(n_ch_trim // 5, 5, grid_size, grid_size).mean(axis=1)
         bridge_cube = np.array(bridge_slices[:n_ch_trim]).reshape(n_ch_trim // 5, 5, grid_size, grid_size).mean(axis=1)
 
-        # You can update the params_gals dictionary as needed
         params_gen = {
             'galaxy_centers': galaxy_centers,
             'average_vels': average_vels,
@@ -1834,8 +1869,6 @@ class SONGS:
             )
 
 
-            #self.system_params.append(params)
-
             if self.verbose:
                 print('\nSpectral cube created!')
 
@@ -1875,8 +1908,6 @@ class SONGS:
                             convolve_beam(_raw, self.beam_info), sigma=1.0, axis=0)
                     else:
                         params[_comp_key] = gaussian_filter1d(_raw, sigma=1.0, axis=0)
-
-            #self.spectral_cubes.append(spectral_cube_final)
 
             self.results.append((spectral_cube_final_convolved, params))
 
@@ -2007,9 +2038,6 @@ class SONGSPhy:
         controlled, reproducible systems.
         """
 
-        # Initialize random seeds for reproducible results
-        #self.central_Re_kpc = 5 #kpc
-
         # Store configuration parameters
         self.fname = fname
         self.seed = seed
@@ -2047,7 +2075,7 @@ class SONGSPhy:
 
         # Determine number of galaxies per cube
         if n_gals is None:
-            # Default: 1–2 galaxies per cube (legacy behaviour).
+            # Default: sample 1-2 galaxies per cube.
             self.n_gals = np.random.randint(1, 3, n_cubes)
         elif isinstance(n_gals, (tuple, list)) and len(n_gals) == 2:
             # Random inclusive range per cube: n_gals=(lo, hi) → uniform in [lo, hi].
@@ -2069,7 +2097,6 @@ class SONGSPhy:
             self.init_grid_size = int(init_grid_size)
 
         self.grid_size = grid_size      # Size for combined output cube
-        #self.n_spectral_slices = 5*n_spectral_slices + 1  # 5x oversampling + 1 for binning
         self.spectral_resolution = spectral_resolution/5
         self.spatial_resolution = spatial_resolution
         # Convert beam from physical units (kpc, deg) → pixel units (px, deg)
@@ -2485,13 +2512,12 @@ class SONGSPhy:
         if self.verbose:
             print('Calculating and assigning velocity vectors...')
 
-        # Vectorised equivalent of the original per-voxel triple loop. The
-        # per-voxel values below depend only on (i, j) — never on k — so the
-        # loop recomputed the same (vx, vy, vmag) grid_size times over for
-        # nothing; only vel_z (independent dispersion noise) genuinely
-        # varies with k. This matters more now that the local box can grow
-        # well beyond init_grid_size for large-Re galaxies (see above),
-        # where an O(grid_size^3) Python loop becomes prohibitively slow.
+        # Per-voxel velocity values depend only on (i, j), never on k, so
+        # they are computed once on a 2D grid and broadcast along the third
+        # axis; only vel_z (independent dispersion noise) genuinely varies
+        # with k. This keeps the cost O(grid_size^2) rather than
+        # O(grid_size^3), which matters since the local box can grow well
+        # beyond init_grid_size for large-Re galaxies (see above).
         ii, jj = np.meshgrid(np.arange(grid_size), np.arange(grid_size), indexing='ij')
         pos_x = ii - centre[0]
         pos_y = jj - centre[1]
@@ -2692,8 +2718,8 @@ class SONGSPhy:
         # Creating lower and upper limits for the velocity observation bins
         # Create velocity bin edges across all galaxies
 
-        min_vel = -600 #np.min([np.min(v) for v in all_velocities])
-        max_vel = 600 #np.max([np.max(v) for v in all_velocities])
+        min_vel = -600  # symmetric velocity range spanning the full cube (km/s)
+        max_vel = 600
 
         limit = np.max([abs(min_vel), abs(max_vel)])  # Use the maximum absolute value for limits
 
@@ -2787,7 +2813,7 @@ class SONGSPhy:
 
             # Projecting along the LoS (Z-axis)
             spectral_slice = np.sum(combined_cube, axis=2)
-            spectral_cube_S_px.append(spectral_slice)  # Transpose if needed
+            spectral_cube_S_px.append(spectral_slice)
             for g in range(n_galaxies):
                 per_gal_slices[g].append(per_gal_slab[g])
 
@@ -2818,7 +2844,6 @@ class SONGSPhy:
         halo_cube   = np.array(halo_slices[:n_ch_trim]).reshape(n_ch_trim // 5, 5, grid_size, grid_size).mean(axis=1)
         bridge_cube = np.array(bridge_slices[:n_ch_trim]).reshape(n_ch_trim // 5, 5, grid_size, grid_size).mean(axis=1)
 
-        # You can update the params_gals dictionary as needed
         params_gen = {
             'galaxy_centers': galaxy_centers,
             'average_vels': average_vels,
@@ -2953,8 +2978,6 @@ class SONGSPhy:
             )
 
 
-            #self.system_params.append(params)
-
             if self.verbose:
                 print('\nSpectral cube created!')
 
@@ -2994,8 +3017,6 @@ class SONGSPhy:
                             convolve_beam(_raw, self.beam_info), sigma=1.0, axis=0)
                     else:
                         params[_comp_key] = gaussian_filter1d(_raw, sigma=1.0, axis=0)
-
-            #self.spectral_cubes.append(spectral_cube_final)
 
             self.results.append((spectral_cube_final_convolved, params))
 

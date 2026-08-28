@@ -13,8 +13,8 @@ Source install (developer mode)
 
 Clone the repository and install in editable mode::
 
-    git clone https://github.com/arnablahiry/GalCubeCraft.git
-    cd GalCubeCraft
+    git clone https://github.com/arnablahiry/SONGS-spectral-cube-simulator.git
+    cd SONGS-spectral-cube-simulator
     pip install -e .
 
 Dependencies

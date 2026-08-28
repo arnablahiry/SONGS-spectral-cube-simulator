@@ -1,10 +1,11 @@
 """SONGS GUI
 
 Compact Tkinter-based GUI to interactively configure and run the
-``SONGS`` generator. Provides a three-column layout of parameter
-frames, crisp LaTeX-rendered labels, convenience sliders, and utility
-buttons (Generate, Slice, Moments, Spectrum, Save, New). Plotting and file
-I/O are intentionally kept out of the generator core; the GUI imports
+``SONGS`` generator. Provides a 4-column card layout of parameter
+frames (Initialisation, Central Galaxy, Satellite, Diffuse Features),
+crisp LaTeX-rendered labels, convenience sliders, and utility buttons
+(Generate, Slice, Moments, Spectrum, Save, New). Plotting and file I/O
+are intentionally kept out of the generator core; the GUI imports
 top-level visualisation helpers (``moment0``, ``moment1``, ``spectrum``,
 ``slice_view``) to display results.
 
@@ -365,7 +366,7 @@ class LogWindow(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def on_close(self):
-        # Optionally restore stdout/stderr
+        """Restore the original ``sys.stdout``/``sys.stderr`` and destroy the window."""
         sys.stdout = sys.__stdout__
         sys.stderr = sys.__stderr__
         self.destroy()
@@ -395,12 +396,26 @@ class SONGSGUI(tk.Tk):
     """Main GUI application for interactively configuring and running
     SONGS simulations.
 
-    This class implements a compact, self-contained Tk application that
-    exposes the most commonly-used parameters of the generator via a
-    three-column layout of parameter panels. Controls include numeric
-    sliders, textual inputs and convenience buttons that invoke high-level
-    visualisation helpers (``moment0``, ``moment1``, ``spectrum``) or
-    persist generated results to disk.
+    This class implements a compact, self-contained Tk application, launched
+    with ``python -m songs.gui``, that exposes the most commonly-used
+    parameters of the generator through a 4-column dark-themed (or light-themed)
+    card layout, with the SONGS banner running down the left side:
+
+    1. **Initialisation** — grid size, number of spectral channels, number
+       of galaxies, random seed, output directory.
+    2. **Central Galaxy** — Sérsic index, effective radius, scale height,
+       central flux density, inclination, position angle.
+    3. **Satellite** — satellite offset, systemic velocity offset, beam
+       parameters (bmin, bmaj, BPA).
+    4. **Diffuse Features** — sliders/entries mapping onto
+       ``DEFAULT_DIFFUSE_PARAMS`` (halo, bridge and tail amplitudes, tail
+       velocity gradient and decay scale, master enabled toggle).
+
+    Controls include numeric sliders, textual inputs and convenience buttons
+    that invoke high-level visualisation helpers (``moment0``, ``moment1``,
+    ``spectrum``) or persist generated results to disk. See
+    ``docs/source/gui.rst`` for a full description of the layout and
+    workflow.
 
     Key behaviour
     --------------
@@ -441,6 +456,15 @@ class SONGSGUI(tk.Tk):
     """
 
     def __init__(self, theme: str = 'light'):
+        """Build the main window: logo strip, parameter cards, and button bar.
+
+        Parameters
+        ----------
+        theme : {'light', 'dark'}, optional
+            Initial colour theme (default ``'light'``). Falls back to
+            ``'light'`` if an unrecognised value is passed. Can be changed at
+            runtime via the theme toggle button (see :meth:`_toggle_theme`).
+        """
         super().__init__()
         self.title('SONGS GUI')
         self.WINDOW_HEIGHT = 840
@@ -562,6 +586,12 @@ class SONGSGUI(tk.Tk):
             pass
 
     def _load_logo(self):
+        """Load and display the theme-appropriate SONGS logo in the left strip.
+
+        Scales the logo image to the full window height and creates (or
+        updates, on theme change) the ``self._logo_lbl`` widget. Falls back
+        to a plain text label if the logo asset cannot be found/loaded.
+        """
         t = _THEMES[self._theme]
         bg = t['BG']
         try:
@@ -871,6 +901,13 @@ class SONGSGUI(tk.Tk):
         self.after(50, self._add_native_logo_overlay)
 
     def _toggle_large_dataset_mode(self):
+        """Handle a click on the banner's Large-Dataset Mode toggle.
+
+        Flips ``self._large_dataset_mode``, redraws the toggle button, and
+        calls :meth:`_apply_large_dataset_mode` to swap the affected cards,
+        sliders and Generate button between their single-cube and batch
+        forms.
+        """
         self._large_dataset_mode = not self._large_dataset_mode
         if hasattr(self, '_large_dataset_redraw'):
             self._large_dataset_redraw()
@@ -1209,10 +1246,17 @@ class SONGSGUI(tk.Tk):
                 sync()
 
     def _redraw_banner_btns(self):
+        """Redraw all banner buttons (theme, GitHub, API Docs, Large-Dataset
+        toggle) in place, e.g. after a theme change."""
         for _, fn in self._banner_btns:
             fn()
 
     def _disable_theme_btn(self):
+        """Grey out and unbind the theme-toggle banner button.
+
+        Used while a theme switch is already in progress so a second click
+        can't be queued mid-rebuild.
+        """
         cv = getattr(self, '_theme_btn', None)
         if cv is None:
             return
@@ -1229,6 +1273,8 @@ class SONGSGUI(tk.Tk):
         cv.configure(cursor='arrow')
 
     def _enable_theme_btn(self):
+        """Re-enable the theme-toggle banner button after a theme switch
+        completes, by rebuilding the whole banner button row."""
         cv = getattr(self, '_theme_btn', None)
         if cv is None:
             return
@@ -1272,11 +1318,20 @@ class SONGSGUI(tk.Tk):
     ]
 
     def _save_var_state(self) -> dict:
+        """Snapshot the current value of every tk.Var listed in ``_VAR_NAMES``.
+
+        Returns
+        -------
+        dict
+            Mapping of variable name to its current value, for restoring
+            after a widget rebuild (see :meth:`_toggle_theme`).
+        """
         return {name: getattr(self, name).get()
                 for name in self._VAR_NAMES
                 if hasattr(self, name)}
 
     def _restore_var_state(self, state: dict):
+        """Apply a snapshot previously produced by :meth:`_save_var_state`."""
         for name, value in state.items():
             var = getattr(self, name, None)
             if var is not None:
@@ -1286,6 +1341,13 @@ class SONGSGUI(tk.Tk):
                     pass
 
     def _toggle_theme(self):
+        """Handle a click on the theme-toggle banner button.
+
+        Switches between the light and dark palettes: saves all parameter
+        values, reloads the logo and banner, rebuilds every widget under the
+        new theme's colours (via :meth:`_rebuild_widgets`), then restores the
+        saved values so the switch is visually seamless.
+        """
         saved = self._save_var_state()
         self._theme = 'light' if self._theme == 'dark' else 'dark'
         # drop the stale native overlay immediately so the old theme's logo
@@ -1312,6 +1374,12 @@ class SONGSGUI(tk.Tk):
         _vis._VIEWER_THEME = self._theme
 
     def _rebuild_widgets(self):
+        """Destroy and recreate every card/button widget, then reapply the
+        current Large-Dataset Mode state and resize the window to fit.
+
+        Used by :meth:`_toggle_theme` to re-render all widgets in the new
+        theme's colours.
+        """
         for w in list(self.container.winfo_children()):
             w.destroy()
         for w in list(self._btn_area.winfo_children()):
@@ -1435,10 +1503,10 @@ class SONGSGUI(tk.Tk):
     def make_range_slider(self, parent, var_lo, var_hi, from_, to,
                           resolution=0.01, fmt="{:.2f}", integer=False):
         """Single-row dual-handle range slider: an editable entry for each
-        bound flanking a draggable two-handle track — replaces the old
-        pattern of two stacked make_slider() rows (one for min, one for
-        max) with one compact widget. lo <= hi is enforced by construction
-        (dragging/typing one handle past the other clamps it there)."""
+        bound flanking a draggable two-handle track, used for min/max
+        parameter ranges in Large-Dataset Mode. ``lo <= hi`` is enforced by
+        construction (dragging/typing one handle past the other clamps it
+        there)."""
         bg      = getattr(self, '_slider_bg',     "#111111")
         fg      = getattr(self, '_slider_fg',     "#999999")
         acc     = getattr(self, '_slider_accent',  "#b8960a")
@@ -1682,9 +1750,12 @@ class SONGSGUI(tk.Tk):
     # Button callback methods
     # ---------------------------
     def show_logs(self):
-        # Shares _show_log_window with generate() — which also deiconifies,
-        # needed because the log window is withdraw()n at startup, so a bare
-        # lift() left it invisible.
+        """Handle a click on the Logs button: raise the stdout/stderr log window.
+
+        Delegates to :meth:`_show_log_window`, which deiconifies the window
+        (it starts withdrawn at startup, so a bare ``lift()`` would leave it
+        invisible) and applies the themed title bar.
+        """
         self._show_log_window()
 
 
@@ -1701,8 +1772,9 @@ class SONGSGUI(tk.Tk):
         canvas.get_tk_widget().pack(fill='both', expand=True)
 
     def _view_results(self):
-        """(clean_results, noisy_results) to display in Slice/Analysis.
-        ``clean_results`` is always self.generator.results (never mutated,
+        """Return ``(clean_results, noisy_results)`` to display in Slice/Analysis.
+
+        ``clean_results`` is always ``self.generator.results`` (never mutated,
         so Save can still build a correct clean/noisy pair from it);
         ``noisy_results`` is the preview computed in _run_generate when
         "Use Noise?" is Yes, or None otherwise. Both are handed to the
@@ -1991,7 +2063,7 @@ class SONGSGUI(tk.Tk):
         self.tail_Se_factor_max_var.set(0.31)
 
 
-        # New: satellite size fraction (max satellite-to-central ratio for Re,
+        # Satellite size fraction (max satellite-to-central ratio for Re,
         # hz, Se). Greyed out when only one galaxy is requested.
         self.sat_brightness_frac_var = tk.DoubleVar(value=0.36)
         self.sat_brightness_frac_min_var = tk.DoubleVar(value=0.37)   # Large-Dataset Mode
@@ -2038,6 +2110,7 @@ class SONGSGUI(tk.Tk):
         # Helper used multiple times below to find the underlying ttk.Scale
         # inside a slider frame (so we can grey it out when n_gals == 1).
         def find_scale(widget):
+            # Recursively locate the first tk.Scale/ttk.Scale under `widget`.
             if isinstance(widget, (tk.Scale, ttk.Scale)):
                 return widget
             for child in widget.winfo_children():
@@ -2069,6 +2142,8 @@ class SONGSGUI(tk.Tk):
             return inner
 
         def small_card(parent, title=None):
+            """Bordered sub-panel (thin low-opacity outline, optional title)
+            used to group a handful of related controls inside a big_card."""
             outer = tk.Frame(parent, bg=_SM_BORDER, padx=1, pady=1)
             outer.pack(fill='x', padx=6, pady=3)
             inner = tk.Frame(outer, bg=_CARD_BG, padx=5, pady=4)
@@ -2504,6 +2579,11 @@ class SONGSGUI(tk.Tk):
         _prev_last_w = [-1]
 
         def _draw_fov_preview(*_):
+            # Redraw the field-of-view preview canvas: field boundary,
+            # central galaxy and (if any) satellite positions, scaled to
+            # the current fov/spatial_resolution. Bound as a trace callback
+            # on the relevant Tk vars so it refreshes live as the user drags
+            # sliders.
             S = _prev_cv.winfo_width()
             H = _prev_cv.winfo_height()
             if S < 20 or H < 20:
@@ -2983,10 +3063,11 @@ class SONGSGUI(tk.Tk):
             # every colour proportionally toward the card background (the same
             # low-opacity look as the Beam/Noise cards) instead of slamming
             # text to a flat disabled grey on the window background, and it
-            # also dims canvas-drawn items — which is what fades the rich-text
-            # maths symbols and the pill buttons that the old code left at
-            # full brightness. It disables and unbinds interaction too, so the
-            # card is genuinely unclickable while faded.
+            # also dims canvas-drawn items, including the rich-text maths
+            # symbols and pill buttons that a plain widget-option greyout
+            # would leave at full brightness. It disables and unbinds
+            # interaction too, so the card is genuinely unclickable while
+            # faded.
             active = self.n_gals_var.get() > 1
             self._dim_walk(self._bc3, not active)
 
@@ -3432,6 +3513,29 @@ class SONGSGUI(tk.Tk):
 
 
     def _run_generate(self, use_noise=False, sn_peak=None):
+        """Background-thread worker that runs ``self.generator.generate_cubes()``.
+
+        Invoked by :meth:`generate` on a daemon thread so cube generation
+        does not block the UI. Must not touch any Tk API — including
+        ``self.after()`` — since Tk calls from a non-main thread can raise
+        "main thread is not in main loop"; the log window is raised/created
+        on the main thread by :meth:`generate` before this worker starts.
+        Results are handed back as plain Python attributes
+        (``self._gen_preview_results``, ``self._gen_error``,
+        ``self._gen_done``) which :meth:`_poll_generation_done`, scheduled on
+        the main thread, picks up and applies to the UI.
+
+        Parameters
+        ----------
+        use_noise : bool, optional
+            If True, also compute a noisy preview of the first generated cube
+            (via :func:`apply_and_convolve_noise`) for display in the
+            Slice/Analysis viewers, without altering ``self.generator.results``
+            (which Save relies on staying the clean cube).
+        sn_peak : float or None, optional
+            Target peak signal-to-noise ratio passed through to the noise
+            model when ``use_noise`` is True.
+        """
         # Disable garbage collection in this thread to prevent cleanup
         # of Tkinter objects from the wrong thread
         import gc
@@ -3443,16 +3547,6 @@ class SONGSGUI(tk.Tk):
             if self._is_closing:
                 return
 
-            # NOTE: the log window is raised/created on the MAIN thread by
-            # generate() before this worker starts — doing it here touched Tk
-            # from a background thread ("main thread is not in main loop"),
-            # and because that call sat in this outer try (which has only a
-            # finally, no except) the exception escaped the thread silently:
-            # no popup, generation never ran, and the Slice/Analysis/Save
-            # buttons disabled at the start of generate() were never
-            # re-enabled. Only bit on the SECOND generate onward, when
-            # log_window already existed and the deiconify/lift path ran.
-
             try:
                 results = self.generator.generate_cubes()
                 # Check again before publishing results
@@ -3462,11 +3556,11 @@ class SONGSGUI(tk.Tk):
                 # Slice/Analysis view self.generator.results directly, which
                 # generate_cubes() always leaves as the CLEAN cube (Save
                 # relies on that staying clean so it can write a proper
-                # clean/noisy pair) — so "Use Noise? Yes" had no visible
-                # effect until you saved. Precompute a separate noisy
-                # preview here (background thread — apply_and_convolve_noise
-                # is pure numpy, no Tk calls) and show it in Slice/Analysis
-                # instead, without touching self.generator.results.
+                # clean/noisy pair). When "Use Noise?" is enabled, compute a
+                # separate noisy preview here (background thread —
+                # apply_and_convolve_noise is pure numpy, no Tk calls) and
+                # show that in Slice/Analysis instead, without touching
+                # self.generator.results.
                 preview_results = None
                 if use_noise and results:
                     try:
@@ -3480,14 +3574,10 @@ class SONGSGUI(tk.Tk):
                         print(f"[SONGS] Noisy preview failed, showing clean cube instead: {e}")
 
                 # Hand the outcome back to the MAIN thread as plain Python
-                # attributes. This worker must not touch Tk at all — not even
-                # self.after(), which is itself a Tk call (it does
-                # tk.createcommand under the hood) and can raise
-                # "main thread is not in main loop". When that happened the
-                # exception escaped the thread with no dialog and the buttons
-                # disabled at the start of generate() were never re-enabled —
-                # the window looked permanently dead. _poll_generation_done(),
-                # scheduled on the main thread by generate(), picks these up.
+                # attributes; this worker must not touch Tk at all, not even
+                # self.after() (itself a Tk call under the hood).
+                # _poll_generation_done(), scheduled on the main thread by
+                # generate(), picks these up.
                 self._gen_preview_results = preview_results
                 self._gen_error = None
                 self._gen_done = True
@@ -3551,6 +3641,15 @@ class SONGSGUI(tk.Tk):
             except Exception: pass
 
     def generate(self):
+        """Handle a click on the Generate button (single-cube mode).
+
+        Builds a fresh ``SONGS`` generator from the current UI values (via
+        :meth:`create_generator`), disables the theme and result buttons for
+        the duration of the run, and launches :meth:`_run_generate` on a
+        background daemon thread so the UI stays responsive.
+        :meth:`_poll_generation_done` is scheduled on the main thread to
+        detect completion, publish the results, and re-enable the buttons.
+        """
         import random as _random
         self._pending_seed = _random.randint(0, 2**31 - 1)
         print(f"[SONGS] Instance seed: {self._pending_seed}")
@@ -3566,10 +3665,9 @@ class SONGSGUI(tk.Tk):
             except Exception: pass
         self._preview_results = None   # drop any stale noisy preview from a previous run
 
-        # Raise/create the log window HERE, on the main thread — it used to
-        # be done inside _run_generate, i.e. from the worker thread, which is
-        # not safe for Tk and blew up (silently, killing the worker) from the
-        # second generate onward. See the note in _run_generate.
+        # Raise/create the log window HERE, on the main thread: _run_generate
+        # runs in a background thread and must never touch Tk (see its
+        # docstring).
         self._show_log_window()
 
         # Stamp the pre-sampled positions onto the generator right before launch,
@@ -3964,6 +4062,28 @@ class SONGSGUI(tk.Tk):
         self.after(120, self._ld_progress_ticker)
 
     def _run_generate_dataset(self, base):
+        """Background-thread worker that generates a batch of cubes for
+        Large-Dataset Mode.
+
+        For each of ``base['n_samples']`` cubes: samples a fresh set of
+        physical parameters (:meth:`_sample_cube_params`), builds a one-off
+        ``SONGSPhy`` generator, runs it, and writes the resulting cube plus a
+        manifest entry to ``base['save_folder']/raw``. Checks
+        ``self._is_closing``/``self._stop_requested`` between cubes so the
+        run can be aborted early; a failed individual cube is logged and
+        skipped rather than aborting the whole batch. Like
+        :meth:`_run_generate`, this runs on a daemon thread and must not
+        touch Tk; progress is polled by :meth:`_ld_progress_ticker` on the
+        main thread via ``self._ld_done``/``self._ld_total``.
+
+        Parameters
+        ----------
+        base : dict
+            Batch-level configuration collected by
+            :meth:`_collect_large_dataset_base` (sample count, save folder,
+            beam handling, overlap policy, and the per-parameter
+            min/max/enabled ranges to sample from).
+        """
         import gc
         gc_was_enabled = gc.isenabled()
         gc.disable()
@@ -4439,6 +4559,12 @@ class SONGSGUI(tk.Tk):
 
 
 def main():
+    """Entry point for ``python -m songs.gui``.
+
+    Parses ``--dark``/``--light`` command-line flags, applies the macOS HiDPI
+    fix (must run before the Tk root window is created), then instantiates
+    and runs :class:`SONGSGUI`.
+    """
     import argparse
     parser = argparse.ArgumentParser(prog='songs.gui', description='SONGS spectral cube simulator GUI')
     group = parser.add_mutually_exclusive_group()

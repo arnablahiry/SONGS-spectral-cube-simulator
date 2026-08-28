@@ -1,7 +1,7 @@
 # SONGS — Spectral Observations of Non-stationary Galactic Structures
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/arnablahiry/GalCubeCraft/main/assets/songs_banner.png"
+  <img src="https://raw.githubusercontent.com/arnablahiry/SONGS-spectral-cube-simulator/main/assets/songs_banner.png"
        alt="SONGS banner"
        width="100%" />
 </p>
@@ -17,14 +17,33 @@ pre-training.
 ---
 
 ```{toctree}
-:maxdepth: 2
-:caption: Contents
+:maxdepth: 1
+:caption: Getting Started
 
 installation
 quickstart
-physics
-generator
+```
+
+```{toctree}
+:maxdepth: 1
+:caption: User Guide
+
 gui
+```
+
+```{toctree}
+:maxdepth: 1
+:caption: Physics & Model Reference
+
+physics
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: API Reference
+
+generator
+api_gui
 visualise
 utilities
 ```
