@@ -60,12 +60,23 @@ import time
 
 import h5py
 import numpy as np
+from tqdm import tqdm
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_THIS_DIR, '..', 'src'))
 
 from songs.core import SONGSPhy, DEFAULT_DIFFUSE_PARAMS, _save_cube_hdf5, _sersic_total_flux_3d  # noqa: E402
 from songs.utils import apply_and_convolve_noise  # noqa: E402
+
+
+def _n_spectral_channels(spectral_resolution):
+    """Final channel count for a given km/s spectral_resolution — mirrors the
+    fixed +/-600 km/s window and 5x-oversample-then-bin logic in
+    SONGSPhy.make_spectral_cube (src/songs/core.py)."""
+    fine_resolution = spectral_resolution / 5
+    limit = 600
+    limits = np.arange(-limit, limit + fine_resolution, fine_resolution)
+    return (len(limits) - 1) // 5
 
 
 # ---------------------------------------------------------------------------
@@ -326,9 +337,10 @@ def run(base, seed=None, resume=False, log_every=10, replay_entries=None):
     n_done_this_run = 0
     t_run_start = time.time()
 
-    for cube_index, cube_filename, replay_entry in iterator:
+    pbar = tqdm(iterator, total=len(iterator), desc="generating cubes", unit="cube")
+    for cube_index, cube_filename, replay_entry in pbar:
         if _stop_requested:
-            print(f"[generate_dataset] stopped after {len(manifest)}/{n} cubes.")
+            pbar.write(f"[generate_dataset] stopped after {len(manifest)}/{n} cubes.")
             break
 
         if cube_filename in existing_filenames:
@@ -366,7 +378,7 @@ def run(base, seed=None, resume=False, log_every=10, replay_entries=None):
             results = g.generate_cubes()
             cube, core_params = results[0]
         except Exception as e:
-            print(f"[generate_dataset] cube {cube_index} failed: {e}")
+            pbar.write(f"[generate_dataset] cube {cube_index} failed: {e}")
             continue
 
         manifest_entry = build_cube_manifest(cube_params, sn_peak=cube_params['sn_peak'])
@@ -387,13 +399,16 @@ def run(base, seed=None, resume=False, log_every=10, replay_entries=None):
         n_done_this_run += 1
 
         dt = time.time() - cube_t0
+        pbar.set_postfix(idx=f"{cube_index}/{n}", last=f"{dt:.1f}s")
         if n_done_this_run % log_every == 0 or cube_index == n:
             elapsed = time.time() - t_run_start
             rate = n_done_this_run / elapsed if elapsed > 0 else 0.0
             eta_s = (n - cube_index) / rate if rate > 0 else float('nan')
-            print(f"[generate_dataset] {cube_index}/{n} cubes "
+            pbar.write(f"[generate_dataset] {cube_index}/{n} cubes "
                  f"({len(manifest)} total in manifest) — last {dt:.1f}s/cube, "
-                 f"avg {1/rate:.1f}s/cube, ETA {eta_s/60:.1f} min", flush=True)
+                 f"avg {1/rate:.1f}s/cube, ETA {eta_s/60:.1f} min")
+
+    pbar.close()
 
     with open(dataset_path, 'w') as fh:
         json.dump(dict(
@@ -520,10 +535,14 @@ def main(argv=None):
         print(f"[generate_dataset] replaying {len(replay_entries)} cube params from "
              f"{args.replay_json} into {args.out}")
     else:
+        n_channels = _n_spectral_channels(base['spectral_resolution'])
         print(f"[generate_dataset] generating up to {base['n_samples']} cubes into {args.out}")
         print(f"[generate_dataset] grid_size={base['grid_size']} "
              f"spatial_resolution_range={base['spatial_resolution_range']} "
              f"Re_fixed={base['Re_fixed']} kpc  use_noise={base['use_noise']}")
+        print(f"[generate_dataset] spectral_resolution={base['spectral_resolution']} km/s  "
+             f"final cube dimensions: {n_channels} x {base['grid_size']} x {base['grid_size']} "
+             f"(channels x ny x nx)")
 
     run(base, seed=args.seed, resume=args.resume, log_every=args.log_every,
         replay_entries=replay_entries)

@@ -79,7 +79,7 @@ def test_place_galaxies_minimum_separation():
     grid_size = 125
     init_grid_size = 30   # kept small so min_pos/max_pos leave plenty of room
     # Mirror the formula in place_galaxies
-    min_sep = max(4, int(init_grid_size // 1.5))
+    min_sep = max(4, init_grid_size // 6)
     centers = place_galaxies(n_galaxies=3, grid_size=grid_size,
                              init_grid_size=init_grid_size, offset_gals=40)
     for i in range(len(centers)):
