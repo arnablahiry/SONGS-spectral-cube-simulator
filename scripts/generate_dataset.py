@@ -243,9 +243,58 @@ def build_cube_manifest(params, sn_peak=None):
     )
 
 
-def run(base, seed=None, resume=False, log_every=10):
+def load_replay_manifest(path):
+    """Load a previously written dataset.json and return its manifest
+    entries, sorted by ``index``. Used by ``--replay-json`` to regenerate
+    cubes with the exact same physical parameters as an existing dataset
+    instead of freshly sampling them."""
+    with open(path, 'r') as fh:
+        d = json.load(fh)
+    entries = d.get('manifest', [])
+    return sorted(entries, key=lambda e: e['index'])
+
+
+def cube_params_from_entry(entry, offset_gals_px_range):
+    """Inverse of build_cube_manifest(): reconstruct a sample_cube_params()
+    -shaped dict from one manifest entry, so an existing cube's exact
+    physical parameters (Re, hz, Se, angles, sigma_v, beam, diffuse params,
+    sn_peak, ...) can be replayed through the same generation code path.
+
+    NOTE: the manifest does not record ``offset_gals`` (the per-cube
+    galaxy-placement offset), because it's a placement detail, not a
+    physical galaxy property — so it's redrawn here from
+    ``offset_gals_px_range`` (scaled to this entry's spatial resolution),
+    same as a fresh run would. This means replayed cubes reproduce every
+    stored physical parameter exactly, but satellite *positions* are not
+    guaranteed to be pixel-identical to the original run.
+    """
+    sr = float(entry['spatial_resolution_kpc_per_px'])
+    return dict(
+        beam_info=list(entry['beam_info_kpc']),
+        n_gals=int(entry['n_gals']),
+        fov=int(entry['fov_kpc']),
+        spectral_resolution=entry['spectral_resolution_km_s'],
+        spatial_resolution=sr,
+        all_Re=np.array(entry['Re_kpc'], dtype=float) / sr,
+        all_hz=np.array(entry['hz'], dtype=float) / sr,
+        all_Se=np.array(entry['Se'], dtype=float),
+        all_n=np.array(entry['sersic_n'], dtype=float),
+        all_gal_x_angles=np.array(entry['inclination_x_deg'], dtype=float),
+        all_gal_y_angles=np.array(entry['inclination_y_deg'], dtype=float),
+        sigma_v=float(entry['sigma_v_km_s']),
+        offset_gals=(offset_gals_px_range[0] * sr, offset_gals_px_range[1] * sr),
+        diffuse_params=dict(entry['diffuse_params']),
+        sn_peak=(float(entry['sn_peak']) if entry.get('sn_peak') is not None else None),
+    )
+
+
+def run(base, seed=None, resume=False, log_every=10, replay_entries=None):
     """Exact port of SONGSGUI._run_generate_dataset, minus the Tk
-    progress-bar/thread plumbing — prints progress to stdout instead."""
+    progress-bar/thread plumbing — prints progress to stdout instead.
+
+    If ``replay_entries`` is given (a list of manifest entries loaded via
+    ``load_replay_manifest``), cube parameters are taken from those entries
+    instead of being freshly sampled — see ``cube_params_from_entry``."""
     raw_dir = os.path.join(base['save_folder'], 'raw')
     os.makedirs(raw_dir, exist_ok=True)
     dataset_path = os.path.join(base['save_folder'], 'dataset.json')
@@ -263,22 +312,33 @@ def run(base, seed=None, resume=False, log_every=10):
              f"in {dataset_path}, continuing from index {start_index + 1}")
 
     rng = np.random.default_rng(seed)
-    n = base['n_samples']
+
+    if replay_entries is not None:
+        # Replay order need not be contiguous by index, so (unlike the fresh
+        # RNG-sampled path) rely solely on existing_filenames below to skip
+        # already-generated cubes rather than start_index.
+        n = len(replay_entries)
+        iterator = [(e['index'], e['filename'], e) for e in replay_entries]
+    else:
+        n = base['n_samples']
+        iterator = [(i + 1, f'cube_{i + 1:05d}.h5', None) for i in range(start_index, n)]
+
     n_done_this_run = 0
     t_run_start = time.time()
 
-    for i in range(start_index, n):
+    for cube_index, cube_filename, replay_entry in iterator:
         if _stop_requested:
             print(f"[generate_dataset] stopped after {len(manifest)}/{n} cubes.")
             break
 
-        cube_index = i + 1
-        cube_filename = f'cube_{cube_index:05d}.h5'
         if cube_filename in existing_filenames:
             continue  # --resume: already generated in a previous invocation
 
         cube_t0 = time.time()
-        cube_params = sample_cube_params(base, rng)
+        if replay_entry is not None:
+            cube_params = cube_params_from_entry(replay_entry, base['offset_gals_px'])
+        else:
+            cube_params = sample_cube_params(base, rng)
         try:
             g = SONGSPhy(
                 n_gals=cube_params['n_gals'],
@@ -363,6 +423,19 @@ def parse_args(argv=None):
                         'already present and append new ones. Safe to resubmit after '
                         'preemption/a time-limit kill.')
     p.add_argument('--log-every', type=int, default=10, help='Print progress every N cubes.')
+    p.add_argument('--replay-json', type=str, default=None,
+                   help='Path to an existing dataset.json whose manifest entries should be '
+                        'replayed instead of freshly sampled: every cube is regenerated with '
+                        'that entry\'s exact n_gals/Re/hz/Se/sersic-index/inclinations/'
+                        'sigma_v/beam/fov/spatial+spectral resolution/diffuse-params/sn_peak, '
+                        'and written under the same index/filename as in that manifest. '
+                        '--n-samples, --seed and all the per-parameter --*-range flags are '
+                        'ignored for replayed cubes (they only matter for the RNG-sampled '
+                        'path). The one thing NOT stored in a manifest — and so NOT '
+                        'reproduced exactly — is each cube\'s satellite placement offset; it '
+                        'is redrawn from --offset-px-range same as a fresh run. Combine with '
+                        '--out pointing at a fresh directory (or with --resume) to only '
+                        'regenerate cubes missing their raw/*.h5 file.')
 
     # --- Initialisation (shared by every cube) ---
     p.add_argument('--grid-size', type=int, default=96,
@@ -439,12 +512,21 @@ def main(argv=None):
 
     os.makedirs(args.out, exist_ok=True)
     base = build_base_config(args)
-    print(f"[generate_dataset] generating up to {base['n_samples']} cubes into {args.out}")
-    print(f"[generate_dataset] grid_size={base['grid_size']} "
-         f"spatial_resolution_range={base['spatial_resolution_range']} "
-         f"Re_fixed={base['Re_fixed']} kpc  use_noise={base['use_noise']}")
 
-    run(base, seed=args.seed, resume=args.resume, log_every=args.log_every)
+    replay_entries = None
+    if args.replay_json:
+        replay_entries = load_replay_manifest(args.replay_json)
+        base['n_samples'] = len(replay_entries)
+        print(f"[generate_dataset] replaying {len(replay_entries)} cube params from "
+             f"{args.replay_json} into {args.out}")
+    else:
+        print(f"[generate_dataset] generating up to {base['n_samples']} cubes into {args.out}")
+        print(f"[generate_dataset] grid_size={base['grid_size']} "
+             f"spatial_resolution_range={base['spatial_resolution_range']} "
+             f"Re_fixed={base['Re_fixed']} kpc  use_noise={base['use_noise']}")
+
+    run(base, seed=args.seed, resume=args.resume, log_every=args.log_every,
+        replay_entries=replay_entries)
 
 
 if __name__ == '__main__':
