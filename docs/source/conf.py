@@ -29,12 +29,12 @@ html_static_path = ['_static']
 # Logo in the top left of the sidebar. html_logo is the fallback used
 # wherever a theme-specific variant isn't given (non-JS contexts, print);
 # html_theme_options.logo below swaps to image_dark when dark mode is active.
-html_logo = '../../assets/songs_icon_1.png'
+html_logo = '../../assets/songs_icon.png'
 
 html_theme_options = {
     "logo": {
-        "image_light": "../../assets/songs_icon_1.png",
-        "image_dark": "../../assets/songs_icon_1_dark.png",
+        "image_light": "../../assets/songs_icon.png",
+        "image_dark": "../../assets/songs_icon_dark.png",
     },
 }
 
