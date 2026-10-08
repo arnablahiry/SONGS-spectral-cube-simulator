@@ -139,7 +139,7 @@ def moment0(data, idx, save=False, fname_save=None, inline=False):
     # Compute fixed colour limits from the integrated (moment0) map so the
     # slice viewer uses a consistent scale across channels.
     integrated = cube.sum(axis=0) * del_V
-    vmin = float(np.nanmin(integrated))
+    vmin = min(float(np.nanmin(integrated)), 0.0)
     vmax = float(np.nanmax(integrated))
 
     fig, ax = plt.subplots(figsize=(5,5))
@@ -157,7 +157,7 @@ def moment0(data, idx, save=False, fname_save=None, inline=False):
                 pass
         except Exception:
             pass
-    im = ax.imshow(cube.sum(axis=0) * del_V, cmap='RdBu_r', origin='lower', extent=extent, vmin=0, vmax=vmax)
+    im = ax.imshow(integrated, cmap='RdBu_r', origin='lower', extent=extent, vmin=vmin, vmax=vmax)
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("top", size="5%", pad=0.2)
     cb = fig.colorbar(im, cax=cax, orientation='horizontal', label=r'$\rm Jy\;beam^{-1} \cdot km\;s^{-1}$', format='%.2f')
@@ -1737,9 +1737,10 @@ class AnalysisViewer(tk.Toplevel):
         # ── Moment 0 ──────────────────────────────────────────────────────────
         mom0 = cube.sum(axis=0) * del_V
         vmax0 = float(np.nanmax(mom0)) if np.nanmax(mom0) > 0 else 1.0
+        vmin0 = min(float(np.nanmin(mom0)), 0.0)
         _style_ax(ax_m0)
         im0 = ax_m0.imshow(mom0, cmap='inferno', origin='lower',
-                           extent=extent, vmin=0, vmax=vmax0)
+                           extent=extent, vmin=vmin0, vmax=vmax0)
         _inner_title(ax_m0, "Moment 0")
         cb0 = self._fig.colorbar(im0, cax=cax0, orientation='horizontal')
         cb0.ax.tick_params(colors=_txt, labelsize=7, pad=3)

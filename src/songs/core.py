@@ -58,6 +58,7 @@ import numpy as np
 import pickle
 import h5py
 from .utils import *
+from .spiral import SpiralGalaxy, sample_spiral_params
 from astropy.cosmology import FlatLambdaCDM
 import matplotlib.patches as patches
 from astropy import units as u
@@ -759,6 +760,12 @@ def _save_cube_hdf5(path, cube, params, gen, cube_idx, noisy_cube=None):
         bg.attrs['bmaj_px'] = float(beam[1])
         bg.attrs['bpa_deg'] = float(beam[2])
 
+        f.attrs['morphology'] = str(params.get('morphology', 'disk'))
+        if params.get('spiral'):
+            sp_grp = f.create_group('spiral')
+            for k, v in params['spiral'].items():
+                sp_grp.attrs[k] = v
+
         dp_grp = f.create_group('diffuse_params')
         for k, v in getattr(gen, 'diffuse_params', {}).items():
             try:
@@ -811,6 +818,46 @@ def _sersic_total_flux_3d_spherical(Se, Re, n):
     return 4 * np.pi * n * Re**3 * Se * np.exp(bn) * math.gamma(3 * n) / (bn ** (3 * n))
 
 
+# Keys of a ``spiral_params`` dict that configure the sampler rather than
+# fixing a physical parameter of the density wave.
+_SPIRAL_SAMPLER_KEYS = ('ranges', 'max_pitch_deg', 'min_pitch_deg', 'min_arm_extent', 'max_tries')
+
+
+def _draw_spiral(Re_kpc, v_0, spiral_params):
+    """Sample spiral-structure parameters for a central galaxy of size Re_kpc.
+
+    The spiral lives in an exponential disk, whose effective radius is
+    1.678 scale lengths. Entries of ``spiral_params`` that name a
+    :class:`SpiralGalaxy` argument are held fixed; the keys in
+    ``_SPIRAL_SAMPLER_KEYS`` are forwarded to :func:`sample_spiral_params`.
+    """
+    opts = dict(spiral_params or {})
+    sampler_kw = {k: opts.pop(k) for k in _SPIRAL_SAMPLER_KEYS if k in opts}
+    return sample_spiral_params(Re_kpc / 1.678, v_0, overrides=opts, **sampler_kw)
+
+
+def _image_rotation_matrix(angle_x, angle_y):
+    """Rotation matrix equivalent to the two ``scipy.ndimage.rotate`` calls in
+    ``rotated_system``: ``angle_x`` in the (axis 0, axis 2) plane, then
+    ``angle_y`` in the (axis 1, axis 2) plane, both in degrees."""
+    a, b = np.radians(angle_x), np.radians(angle_y)
+    M1 = np.array([[np.cos(a), 0, -np.sin(a)], [0, 1, 0], [np.sin(a), 0, np.cos(a)]])
+    M2 = np.array([[1, 0, 0], [0, np.cos(b), -np.sin(b)], [0, np.sin(b), np.cos(b)]])
+    return M2 @ M1
+
+
+def _spiral_for(gen, i, j):
+    """Spiral parameters of galaxy j in cube i, or None for a plain disk.
+
+    Tolerates generators whose per-cube lists were rewritten after
+    construction (as the GUI does).
+    """
+    try:
+        return gen.all_spiral_params[i][j]
+    except (AttributeError, IndexError, TypeError):
+        return None
+
+
 class SONGS:
     """Generator for ensembles of synthetic IFU spectral cubes (pixel units).
 
@@ -857,7 +904,7 @@ class SONGS:
     examples.
     """
     
-    def __init__(self, n_gals=None, n_cubes=1, resolution='all', offset_gals=30, beam_info = [4,4,0], grid_size=125, n_spectral_slices=40, n_sersic=None, save=False, fname=None, verbose=True, seed=None, diffuse_params=None, sat_brightness_frac=None, diffuse_flux_frac=1.0, sat_vel_dispersion=50.0, allow_overlap=False):
+    def __init__(self, n_gals=None, n_cubes=1, resolution='all', offset_gals=30, beam_info = [4,4,0], grid_size=125, n_spectral_slices=40, n_sersic=None, save=False, fname=None, verbose=True, seed=None, diffuse_params=None, sat_brightness_frac=None, diffuse_flux_frac=1.0, sat_vel_dispersion=50.0, allow_overlap=False, morphology='disk', spiral_params=None):
         """
         Initialize the SONGS generator.
 
@@ -921,6 +968,24 @@ class SONGS:
             ``DEFAULT_DIFFUSE_PARAMS``. If ``None``, all defaults are used.
             Set ``diffuse_params['enabled'] = False`` to disable diffuse
             components. See ``DEFAULT_DIFFUSE_PARAMS`` for available keys.
+        morphology : {'disk', 'spiral'}
+            ``'disk'`` (default) renders axisymmetric disks. ``'spiral'`` turns
+            the central galaxy of every cube into a tightly wound grand-design
+            spiral built from Lin–Shu density-wave theory on an explicit mass
+            model (see :mod:`songs.spiral`): the arm shape follows the WKB
+            dispersion relation, the arms span the region between the inner
+            Lindblad resonance and the corotation Q-barrier, the gas shocks
+            into narrow arms that fragment into star-forming knots, and it
+            carries the streaming motions that mass and angular-momentum
+            conservation require. The central disk becomes exponential
+            (Sérsic n = 1) unless ``n_sersic`` is given, its rotation curve
+            comes from the mass model and its velocity dispersion equals the
+            gas sound speed c_s.
+        spiral_params : dict or None
+            Optional fixed values for :class:`songs.spiral.SpiralGalaxy`
+            arguments (e.g. ``{'m': 2, 'Q_min': 1.1, 'm2': None}``); anything
+            not given is sampled. May also carry sampler options (``max_pitch_deg``,
+            ``min_pitch_deg``, ``min_arm_extent``, ``ranges``, ``max_tries``).
 
         Notes
         -----
@@ -952,6 +1017,12 @@ class SONGS:
         # When True, drop the minimum-separation floor so satellites may
         # overlap the central galaxy or each other.
         self.allow_overlap = bool(allow_overlap)
+
+        if morphology not in ('disk', 'spiral'):
+            raise ValueError(f"morphology must be 'disk' or 'spiral' (got {morphology!r})")
+        self.morphology = morphology
+        self.spiral_params = spiral_params
+        self.all_spiral_params = []       # Per cube: spiral wave kwargs per galaxy (None = disk)
 
         # Satellite peak-brightness fraction relative to the central galaxy.
         # None → sampled per-satellite from a uniform [0.15, 0.35] range
@@ -1056,6 +1127,8 @@ class SONGS:
             Re = [Re_central[i]]                                      # Effective radius in pixels
             hz = [np.random.uniform(0.5, 1) / pix_spatial_scale]      # Scale height (thinner in high-res)
             n_sersics = [n_sersic if n_sersic is not None else np.random.uniform(0.5, 1.5)]  # If specific central sersic index is provided, else random
+            if morphology == 'spiral' and n_sersic is None:
+                n_sersics[0] = 1.0        # density waves live in an exponential disk
             
             
             # 1. Define base flux density (intrinsic)
@@ -1121,6 +1194,14 @@ class SONGS:
             self.all_Se.append(np.asarray(Se))
             self.all_n.append(np.asarray(n_sersics))                                    # Sérsic index: 0.5-1.5
             self.all_gal_v_0.append(np.random.uniform(200, 200, n_gal))         # Rotation velocity: fixed at 200 km/s
+
+            # Spiral structure (central galaxy only; satellites stay disks)
+            spirals = [None] * n_gal
+            if morphology == 'spiral':
+                spirals[0] = _draw_spiral(Re[0] * pix_spatial_scale, self.all_gal_v_0[-1][0], spiral_params)
+                # The gas that shocks in the arms has dispersion c_s
+                self.all_gal_vz_sigmas[-1][0] = spirals[0]['c_s']
+            self.all_spiral_params.append(spirals)
 
         # Initialize cube generation process
         self.fname = fname
@@ -1376,6 +1457,16 @@ class SONGS:
         # Compute 3D galaxy flux density profile
         # Apply cosmological flux density dimming: S ∝ (1+z)^-3
         disk = self.sersic_flux_density_3d(X_kpc, Y_kpc, Z_kpc, Se, Re_kpc, n, hz_kpc)
+
+        # Spiral structure: arms, knots and turbulence redistribute the disk
+        # emission around each annulus; the nuclear ring and central
+        # concentration take their share of the total.
+        spiral = params_gal_rot.get('spiral')
+        wave = SpiralGalaxy(**spiral) if spiral else None
+        if wave is not None:
+            if self.verbose:
+                print('Imprinting an m={} spiral density wave'.format(wave.m))
+            disk = wave.emission_cube(X_kpc, Y_kpc, Z_kpc, disk)
         # Flux-conserving correction: point-sampling this profile at voxel
         # centers doesn't generally conserve total flux across resolutions —
         # rescale the discrete sum to match the analytic continuous total
@@ -1428,10 +1519,26 @@ class SONGS:
         vel_x_2d = velocity_mag_2d * tangent_unit_x
         vel_y_2d = velocity_mag_2d * tangent_unit_y
 
+        if wave is not None:
+            # Mass-model rotation curve plus density-wave streaming motions
+            vel_x_2d, vel_y_2d = wave.velocity_on_grid(pos_x * pix_spatial_scale,
+                                                       pos_y * pix_spatial_scale)
+            # Coherent turbulent motions of the gas (isotropic, kpc-correlated)
+            turb_vx, turb_vy, turb_vz = wave.turbulent_velocity_on_grid(pos_x * pix_spatial_scale,
+                                                                        pos_y * pix_spatial_scale)
+            vel_x_2d = vel_x_2d + turb_vx
+            vel_y_2d = vel_y_2d + turb_vy
+            velocity_mag_2d = np.hypot(vel_x_2d, vel_y_2d)
+
         vel_x_cube = np.repeat(vel_x_2d[:, :, None], grid_size, axis=2)
         vel_y_cube = np.repeat(vel_y_2d[:, :, None], grid_size, axis=2)
         vel_mag_cube = np.repeat(velocity_mag_2d[:, :, None], grid_size, axis=2)
         vel_z_cube = np.random.normal(0, sigma_vz, size=(grid_size, grid_size, grid_size))
+        if wave is not None:
+            # Small-scale dispersion (rising towards the centre) plus the
+            # coherent turbulent component along the disk normal
+            sigma_map = wave.dispersion_on_grid(pos_x * pix_spatial_scale, pos_y * pix_spatial_scale)
+            vel_z_cube = vel_z_cube * (sigma_map / sigma_vz)[:, :, None] + turb_vz[:, :, None]
 
 
 
@@ -1472,8 +1579,13 @@ class SONGS:
         if self.verbose:
             print('2: Rotating the individual velocity vectors...')
 
-        rotation = R.from_euler('yxz', rotation_angles, degrees=True)
-        rotation_matrix = rotation.as_matrix()
+        # The matrix of the two ndimage.rotate calls above, acting on vectors
+        # (x, y, z) = array axes (0, 1, 2). Velocities must be rotated by
+        # exactly the rotation that moved the voxels; otherwise the projected
+        # velocity field no longer matches the projected geometry (wrong spin
+        # sense, misaligned kinematic axis, and leading instead of trailing
+        # spiral arms).
+        rotation_matrix = _image_rotation_matrix(rotation_angles[0], rotation_angles[1])
 
         # Only the z-component of the rotated vector is kept, so dot each
         # voxel's (vx, vy, vz) with the matrix's third row directly instead
@@ -1483,6 +1595,23 @@ class SONGS:
             + rotation_matrix[2, 1] * transformed_vel_y_cube_xy
             + rotation_matrix[2, 2] * transformed_vel_z_cube_xy
         )
+
+        if getattr(self, 'keep_intermediates', False):
+            # Opt-in record of every stage, for inspection and figures
+            if not hasattr(self, 'intermediates'):
+                self.intermediates = []
+            self.intermediates.append({
+                'axis_kpc': x * pix_spatial_scale,
+                'disk': disk,
+                'vel_x_2d': vel_x_2d,
+                'vel_y_2d': vel_y_2d,
+                'vel_z_cube': vel_z_cube,
+                'rotated_disk': rotated_disk_xy,
+                'rotated_vel_los': rotated_vel_z_cube_xy,
+                'angles_deg': (angle_x, angle_y),
+                'wave': wave,
+                'params': dict(params_gal_rot),
+            })
 
         return rotated_disk_xy, rotated_vel_z_cube_xy
 
@@ -1837,7 +1966,8 @@ class SONGS:
                     'gal_vz_sigma': self.all_gal_vz_sigmas[i][j],
                     'gal_vz_sigma': self.all_gal_vz_sigmas[i][j],
                     'pix_spatial_scale': self.all_pix_spatial_scales[i][j],
-                    'v_0': self.all_gal_v_0[i][j]
+                    'v_0': self.all_gal_v_0[i][j],
+                    'spiral': _spiral_for(self, i, j),
                 }
 
                 if self.verbose:
@@ -1913,6 +2043,11 @@ class SONGS:
                     else:
                         params[_comp_key] = gaussian_filter1d(_raw, sigma=1.0, axis=0)
 
+            _sp = _spiral_for(self, i, 0)
+            params['morphology'] = 'spiral' if _sp is not None else 'disk'
+            if _sp is not None:
+                params['spiral'] = SpiralGalaxy(**_sp).summary()
+
             self.results.append((spectral_cube_final_convolved, params))
 
             if self.save:
@@ -1981,7 +2116,7 @@ class SONGSPhy:
     clarity and inspectability over performance.
     """
     
-    def __init__(self, n_gals=None, n_cubes=1, spatial_resolution=4.5, spectral_resolution=10, offset_gals=20, beam_info = [18,18,0], fov=125, n_sersic=None, save=False, fname=None, verbose=True, seed=None, diffuse_params=None, sat_brightness_frac=None, diffuse_flux_frac=1.0, sat_vel_dispersion=50.0, allow_overlap=False):
+    def __init__(self, n_gals=None, n_cubes=1, spatial_resolution=4.5, spectral_resolution=10, offset_gals=20, beam_info = [18,18,0], fov=125, n_sersic=None, save=False, fname=None, verbose=True, seed=None, diffuse_params=None, sat_brightness_frac=None, diffuse_flux_frac=1.0, sat_vel_dispersion=50.0, allow_overlap=False, morphology='disk', spiral_params=None):
         """
         Initialize the physically parameterised generator (explicit units).
 
@@ -2034,6 +2169,24 @@ class SONGSPhy:
         seed : int or None
             RNG seed to make results reproducible across NumPy, PyTorch
             and Python ``random``.
+        morphology : {'disk', 'spiral'}
+            ``'disk'`` (default) renders axisymmetric disks. ``'spiral'`` turns
+            the central galaxy of every cube into a tightly wound grand-design
+            spiral built from Lin–Shu density-wave theory on an explicit mass
+            model (see :mod:`songs.spiral`): the arm shape follows the WKB
+            dispersion relation, the arms span the region between the inner
+            Lindblad resonance and the corotation Q-barrier, the gas shocks
+            into narrow arms that fragment into star-forming knots, and it
+            carries the streaming motions that mass and angular-momentum
+            conservation require. The central disk becomes exponential
+            (Sérsic n = 1) unless ``n_sersic`` is given, its rotation curve
+            comes from the mass model and its velocity dispersion equals the
+            gas sound speed c_s.
+        spiral_params : dict or None
+            Optional fixed values for :class:`songs.spiral.SpiralGalaxy`
+            arguments (e.g. ``{'m': 2, 'Q_min': 1.1, 'm2': None}``); anything
+            not given is sampled. May also carry sampler options (``max_pitch_deg``,
+            ``min_pitch_deg``, ``min_arm_extent``, ``ranges``, ``max_tries``).
 
         Notes
         -----
@@ -2062,6 +2215,12 @@ class SONGSPhy:
         # When True, drop the minimum-separation floor so satellites may
         # overlap the central galaxy or each other.
         self.allow_overlap = bool(allow_overlap)
+
+        if morphology not in ('disk', 'spiral'):
+            raise ValueError(f"morphology must be 'disk' or 'spiral' (got {morphology!r})")
+        self.morphology = morphology
+        self.spiral_params = spiral_params
+        self.all_spiral_params = []       # Per cube: spiral wave kwargs per galaxy (None = disk)
 
         # Satellite brightness fraction (total-flux fraction vs central).
         self.sat_brightness_frac = sat_brightness_frac
@@ -2167,6 +2326,8 @@ class SONGSPhy:
             Re = [Re_central[i]]                                      # Effective radius in pixels
             hz = [np.random.uniform(0.4, 9) / pix_spatial_scale]      # Scale height (thinner in high-res)
             n_sersics = [n_sersic if n_sersic is not None else np.random.uniform(0.5, 1.5)]  # If specific central sersic index is provided, else random
+            if morphology == 'spiral' and n_sersic is None:
+                n_sersics[0] = 1.0        # density waves live in an exponential disk
             
             
             # 1. Define base flux density (intrinsic)
@@ -2232,6 +2393,14 @@ class SONGSPhy:
             self.all_Se.append(np.asarray(Se))
             self.all_n.append(np.asarray(n_sersics))                                    # Sérsic index: 0.5-1.5
             self.all_gal_v_0.append(np.random.uniform(200, 200, n_gal))         # Rotation velocity: fixed at 200 km/s
+
+            # Spiral structure (central galaxy only; satellites stay disks)
+            spirals = [None] * n_gal
+            if morphology == 'spiral':
+                spirals[0] = _draw_spiral(Re[0] * pix_spatial_scale, self.all_gal_v_0[-1][0], spiral_params)
+                # The gas that shocks in the arms has dispersion c_s
+                self.all_gal_vz_sigmas[-1][0] = spirals[0]['c_s']
+            self.all_spiral_params.append(spirals)
 
         # Initialize cube generation process
         self.fname = fname
@@ -2487,6 +2656,16 @@ class SONGSPhy:
         # Compute 3D galaxy flux density profile
         # Apply cosmological flux density dimming: S ∝ (1+z)^-3
         disk = self.sersic_flux_density_3d(X_kpc, Y_kpc, Z_kpc, Se, Re_kpc, n, hz_kpc)
+
+        # Spiral structure: arms, knots and turbulence redistribute the disk
+        # emission around each annulus; the nuclear ring and central
+        # concentration take their share of the total.
+        spiral = params_gal_rot.get('spiral')
+        wave = SpiralGalaxy(**spiral) if spiral else None
+        if wave is not None:
+            if self.verbose:
+                print('Imprinting an m={} spiral density wave'.format(wave.m))
+            disk = wave.emission_cube(X_kpc, Y_kpc, Z_kpc, disk)
         # Flux-conserving correction: point-sampling this profile at voxel
         # centers doesn't generally conserve total flux across resolutions —
         # rescale the discrete sum to match the analytic continuous total
@@ -2539,10 +2718,26 @@ class SONGSPhy:
         vel_x_2d = velocity_mag_2d * tangent_unit_x
         vel_y_2d = velocity_mag_2d * tangent_unit_y
 
+        if wave is not None:
+            # Mass-model rotation curve plus density-wave streaming motions
+            vel_x_2d, vel_y_2d = wave.velocity_on_grid(pos_x * pix_spatial_scale,
+                                                       pos_y * pix_spatial_scale)
+            # Coherent turbulent motions of the gas (isotropic, kpc-correlated)
+            turb_vx, turb_vy, turb_vz = wave.turbulent_velocity_on_grid(pos_x * pix_spatial_scale,
+                                                                        pos_y * pix_spatial_scale)
+            vel_x_2d = vel_x_2d + turb_vx
+            vel_y_2d = vel_y_2d + turb_vy
+            velocity_mag_2d = np.hypot(vel_x_2d, vel_y_2d)
+
         vel_x_cube = np.repeat(vel_x_2d[:, :, None], grid_size, axis=2)
         vel_y_cube = np.repeat(vel_y_2d[:, :, None], grid_size, axis=2)
         vel_mag_cube = np.repeat(velocity_mag_2d[:, :, None], grid_size, axis=2)
         vel_z_cube = np.random.normal(0, sigma_vz, size=(grid_size, grid_size, grid_size))
+        if wave is not None:
+            # Small-scale dispersion (rising towards the centre) plus the
+            # coherent turbulent component along the disk normal
+            sigma_map = wave.dispersion_on_grid(pos_x * pix_spatial_scale, pos_y * pix_spatial_scale)
+            vel_z_cube = vel_z_cube * (sigma_map / sigma_vz)[:, :, None] + turb_vz[:, :, None]
 
 
 
@@ -2583,8 +2778,13 @@ class SONGSPhy:
         if self.verbose:
             print('2: Rotating the individual velocity vectors...')
 
-        rotation = R.from_euler('yxz', rotation_angles, degrees=True)
-        rotation_matrix = rotation.as_matrix()
+        # The matrix of the two ndimage.rotate calls above, acting on vectors
+        # (x, y, z) = array axes (0, 1, 2). Velocities must be rotated by
+        # exactly the rotation that moved the voxels; otherwise the projected
+        # velocity field no longer matches the projected geometry (wrong spin
+        # sense, misaligned kinematic axis, and leading instead of trailing
+        # spiral arms).
+        rotation_matrix = _image_rotation_matrix(rotation_angles[0], rotation_angles[1])
 
         # Only the z-component of the rotated vector is kept, so dot each
         # voxel's (vx, vy, vz) with the matrix's third row directly instead
@@ -2594,6 +2794,23 @@ class SONGSPhy:
             + rotation_matrix[2, 1] * transformed_vel_y_cube_xy
             + rotation_matrix[2, 2] * transformed_vel_z_cube_xy
         )
+
+        if getattr(self, 'keep_intermediates', False):
+            # Opt-in record of every stage, for inspection and figures
+            if not hasattr(self, 'intermediates'):
+                self.intermediates = []
+            self.intermediates.append({
+                'axis_kpc': x * pix_spatial_scale,
+                'disk': disk,
+                'vel_x_2d': vel_x_2d,
+                'vel_y_2d': vel_y_2d,
+                'vel_z_cube': vel_z_cube,
+                'rotated_disk': rotated_disk_xy,
+                'rotated_vel_los': rotated_vel_z_cube_xy,
+                'angles_deg': (angle_x, angle_y),
+                'wave': wave,
+                'params': dict(params_gal_rot),
+            })
 
         return rotated_disk_xy, rotated_vel_z_cube_xy
 
@@ -2946,7 +3163,8 @@ class SONGSPhy:
                     'gal_vz_sigma': self.all_gal_vz_sigmas[i][j],
                     'gal_vz_sigma': self.all_gal_vz_sigmas[i][j],
                     'pix_spatial_scale': self.all_pix_spatial_scales[i][j],
-                    'v_0': self.all_gal_v_0[i][j]
+                    'v_0': self.all_gal_v_0[i][j],
+                    'spiral': _spiral_for(self, i, j),
                 }
 
                 if self.verbose:
@@ -3021,6 +3239,11 @@ class SONGSPhy:
                             convolve_beam(_raw, self.beam_info), sigma=1.0, axis=0)
                     else:
                         params[_comp_key] = gaussian_filter1d(_raw, sigma=1.0, axis=0)
+
+            _sp = _spiral_for(self, i, 0)
+            params['morphology'] = 'spiral' if _sp is not None else 'disk'
+            if _sp is not None:
+                params['spiral'] = SpiralGalaxy(**_sp).summary()
 
             self.results.append((spectral_cube_final_convolved, params))
 
